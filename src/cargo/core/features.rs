@@ -585,19 +585,19 @@ impl Features {
                     feature_name, feature.version
                 );
                 if self.is_local {
-                    drop(writeln!(
+                    let _ = writeln!(
                         msg,
                         "Remove the feature from Cargo.toml to remove this error."
-                    ));
+                    );
                 } else {
-                    drop(writeln!(
+                    let _ = writeln!(
                         msg,
                         "This package cannot be used with this version of Cargo, \
                          as the unstable feature `{}` is no longer supported.",
                         feature_name
-                    ));
+                    );
                 }
-                drop(writeln!(msg, "{}", see_docs()));
+                let _ = writeln!(msg, "{}", see_docs());
                 bail!(msg);
             }
         }
@@ -629,32 +629,29 @@ impl Features {
 
         if self.nightly_features_allowed {
             if self.is_local {
-                drop(writeln!(
+                let _ = writeln!(
                     msg,
                     "Consider adding `cargo-features = [\"{}\"]` \
                      to the top of Cargo.toml (above the [package] table) \
                      to tell Cargo you are opting in to use this unstable feature.",
                     feature_name
-                ));
+                );
             } else {
-                drop(writeln!(
-                    msg,
-                    "Consider trying a more recent nightly release."
-                ));
+                let _ = writeln!(msg, "Consider trying a more recent nightly release.");
             }
         } else {
-            drop(writeln!(
+            let _ = writeln!(
                 msg,
                 "Consider trying a newer version of Cargo \
                  (this may require the nightly release)."
-            ));
+            );
         }
-        drop(writeln!(
+        let _ = writeln!(
             msg,
             "See https://doc.rust-lang.org/nightly/cargo/{} for more information \
              about the status of this feature.",
             feature.docs
-        ));
+        );
 
         bail!("{}", msg);
     }
@@ -725,7 +722,6 @@ unstable_cli_options!(
     panic_abort_tests: bool = ("Enable support to run tests with -Cpanic=abort"),
     profile_rustflags: bool = ("Enable the `rustflags` option in profiles in .cargo/config.toml file"),
     host_config: bool = ("Enable the [host] section in the .cargo/config.toml file"),
-    sparse_registry: bool = ("Use the sparse protocol when accessing crates.io"),
     registry_auth: bool = ("Authentication for alternative registries, and generate registry authentication tokens using asymmetric cryptography"),
     target_applies_to_host: bool = ("Enable the `target-applies-to-host` key in the .cargo/config.toml file"),
     rustdoc_map: bool = ("Allow passing external documentation mappings to rustdoc"),
@@ -734,6 +730,8 @@ unstable_cli_options!(
     unstable_options: bool = ("Allow the usage of unstable options"),
     skip_rustdoc_fingerprint: bool = (HIDDEN),
     rustdoc_scrape_examples: bool = ("Allows Rustdoc to scrape code examples from reverse-dependencies"),
+    msrv_policy: bool = ("Enable rust-version aware policy within cargo"),
+    lints: bool = ("Pass `[lints]` to the linting tools"),
 );
 
 const STABILIZED_COMPILE_PROGRESS: &str = "The progress bar is now always \
@@ -795,10 +793,7 @@ const STABILISED_MULTITARGET: &str = "Multiple `--target` options are now always
 const STABILIZED_TERMINAL_WIDTH: &str =
     "The -Zterminal-width option is now always enabled for terminal output.";
 
-const STABILISED_SPARSE_REGISTRY: &str = "This flag currently still sets the default protocol \
-    to `sparse` when accessing crates.io. However, this will be removed in the future. \n\
-    The stable equivalent is to set the config value `registries.crates-io.protocol = 'sparse'`\n\
-    or environment variable `CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse`";
+const STABILISED_SPARSE_REGISTRY: &str = "The sparse protocol is now the default for crates.io";
 
 fn deserialize_build_std<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
 where
@@ -950,10 +945,7 @@ impl CliUnstable {
             self.add(flag, &mut warnings)?;
         }
 
-        if self.gitoxide.is_none()
-            && std::env::var_os("__CARGO_USE_GITOXIDE_INSTEAD_OF_GIT2")
-                .map_or(false, |value| value == "1")
-        {
+        if self.gitoxide.is_none() && cargo_use_gitoxide_instead_of_git2() {
             self.gitoxide = GitoxideFeatures::safe().into();
         }
         Ok(warnings)
@@ -1079,12 +1071,7 @@ impl CliUnstable {
             "multitarget" => stabilized_warn(k, "1.64", STABILISED_MULTITARGET),
             "rustdoc-map" => self.rustdoc_map = parse_empty(k, v)?,
             "terminal-width" => stabilized_warn(k, "1.68", STABILIZED_TERMINAL_WIDTH),
-            "sparse-registry" => {
-                // Once sparse-registry becomes the default for crates.io, `sparse_registry` should
-                // be removed entirely from `CliUnstable`.
-                stabilized_warn(k, "1.68", STABILISED_SPARSE_REGISTRY);
-                self.sparse_registry = parse_empty(k, v)?;
-            }
+            "sparse-registry" => stabilized_warn(k, "1.68", STABILISED_SPARSE_REGISTRY),
             "registry-auth" => self.registry_auth = parse_empty(k, v)?,
             "namespaced-features" => stabilized_warn(k, "1.60", STABILISED_NAMESPACED_FEATURES),
             "weak-dep-features" => stabilized_warn(k, "1.60", STABILIZED_WEAK_DEP_FEATURES),
@@ -1107,6 +1094,8 @@ impl CliUnstable {
             "timings" => stabilized_warn(k, "1.60", STABILIZED_TIMINGS),
             "codegen-backend" => self.codegen_backend = parse_empty(k, v)?,
             "profile-rustflags" => self.profile_rustflags = parse_empty(k, v)?,
+            "msrv-policy" => self.msrv_policy = parse_empty(k, v)?,
+            "lints" => self.lints = parse_empty(k, v)?,
             _ => bail!("unknown `-Z` flag specified: {}", k),
         }
 
@@ -1180,9 +1169,15 @@ impl CliUnstable {
 
 /// Returns the current release channel ("stable", "beta", "nightly", "dev").
 pub fn channel() -> String {
+    // ALLOWED: For testing cargo itself only.
+    #[allow(clippy::disallowed_methods)]
     if let Ok(override_channel) = env::var("__CARGO_TEST_CHANNEL_OVERRIDE_DO_NOT_USE_THIS") {
         return override_channel;
     }
+    // ALLOWED: the process of rustc boostrapping reads this through
+    // `std::env`. We should make the behavior consistent. Also, we
+    // don't advertise this for bypassing nightly.
+    #[allow(clippy::disallowed_methods)]
     if let Ok(staging) = env::var("RUSTC_BOOTSTRAP") {
         if staging == "1" {
             return "dev".to_string();
@@ -1191,4 +1186,13 @@ pub fn channel() -> String {
     crate::version()
         .release_channel
         .unwrap_or_else(|| String::from("dev"))
+}
+
+/// Only for testing and developing. See ["Running with gitoxide as default git backend in tests"][1].
+///
+/// [1]: https://doc.crates.io/contrib/tests/running.html#running-with-gitoxide-as-default-git-backend-in-tests
+// ALLOWED: For testing cargo itself only.
+#[allow(clippy::disallowed_methods)]
+fn cargo_use_gitoxide_instead_of_git2() -> bool {
+    std::env::var_os("__CARGO_USE_GITOXIDE_INSTEAD_OF_GIT2").map_or(false, |value| value == "1")
 }

@@ -12,10 +12,10 @@ limit to the number of versions which can be published, however.
 
 First things first, you’ll need an account on [crates.io] to acquire
 an API token. To do so, [visit the home page][crates.io] and log in via a GitHub
-account (required for now). You will also need to verify your email address on the
-[Account Settings](https://crates.io/me) page. Once that is done create an API token,
-make sure you copy it. Once you leave the page you will not be able to see it
-again.
+account (required for now). You will also need to provide and verify your email
+address on the [Account Settings](https://crates.io/settings/profile) page. Once
+that is done [create an API token](https://crates.io/settings/tokens), make sure
+you copy it. Once you leave the page you will not be able to see it again.
 
 Then run the [`cargo login`] command.
 
@@ -33,6 +33,10 @@ This command will inform Cargo of your API token and store it locally in your
 `~/.cargo/credentials.toml`. Note that this token is a **secret** and should not be
 shared with anyone else. If it leaks for any reason, you should revoke it
 immediately.
+
+> **Note**: The [`cargo logout`] command can be used to remove the token from
+> `credentials.toml`. This can be useful if you no longer need it stored on
+> the local machine.
 
 ### Before publishing a new crate
 
@@ -264,6 +268,7 @@ request the org owner to do so.
 
 [Rust API Guidelines]: https://rust-lang.github.io/api-guidelines/
 [`cargo login`]: ../commands/cargo-login.md
+[`cargo logout`]: ../commands/cargo-logout.md
 [`cargo package`]: ../commands/cargo-package.md
 [`cargo publish`]: ../commands/cargo-publish.md
 [`categories`]: manifest.md#the-categories-field

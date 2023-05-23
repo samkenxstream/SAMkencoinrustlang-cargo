@@ -57,6 +57,7 @@ pub struct NewCrate {
     pub repository: Option<String>,
     pub badges: BTreeMap<String, BTreeMap<String, String>>,
     pub links: Option<String>,
+    pub rust_version: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -199,7 +200,7 @@ impl Registry {
     /// let mut handle = Easy::new();
     /// // If connecting to crates.io, a user-agent is required.
     /// handle.useragent("my_crawler (example.com/info)");
-    /// let mut reg = Registry::new_handle(String::from("https://crates.io"), None, handle);
+    /// let mut reg = Registry::new_handle(String::from("https://crates.io"), None, handle, true);
     /// ```
     pub fn new_handle(
         host: String,
@@ -217,6 +218,15 @@ impl Registry {
 
     pub fn set_token(&mut self, token: Option<String>) {
         self.token = token;
+    }
+
+    fn token(&self) -> Result<&str> {
+        let token = match self.token.as_ref() {
+            Some(s) => s,
+            None => bail!("no upload token found, please run `cargo login`"),
+        };
+        check_token(token)?;
+        Ok(token)
     }
 
     pub fn host(&self) -> &str {
@@ -278,16 +288,12 @@ impl Registry {
 
         let url = format!("{}/api/v1/crates/new", self.host);
 
-        let token = match self.token.as_ref() {
-            Some(s) => s,
-            None => bail!("no upload token found, please run `cargo login`"),
-        };
         self.handle.put(true)?;
         self.handle.url(&url)?;
         self.handle.in_filesize(size as u64)?;
         let mut headers = List::new();
         headers.append("Accept: application/json")?;
-        headers.append(&format!("Authorization: {}", token))?;
+        headers.append(&format!("Authorization: {}", self.token()?))?;
         self.handle.http_headers(headers)?;
 
         let started = Instant::now();
@@ -390,12 +396,7 @@ impl Registry {
         headers.append("Content-Type: application/json")?;
 
         if self.auth_required || authorized == Auth::Authorized {
-            let token = match self.token.as_ref() {
-                Some(s) => s,
-                None => bail!("no upload token found, please run `cargo login`"),
-            };
-            check_token(token)?;
-            headers.append(&format!("Authorization: {}", token))?;
+            headers.append(&format!("Authorization: {}", self.token()?))?;
         }
         self.handle.http_headers(headers)?;
         match body {
@@ -522,10 +523,11 @@ pub fn check_token(token: &str) -> Result<()> {
         bail!("please provide a non-empty token");
     }
     if token.bytes().all(|b| {
-        b >= 32 // undefined in ISO-8859-1, in ASCII/ UTF-8 not-printable character
-        && b < 128 // utf-8: the first bit signals a multi-byte character
-        && b != 127 // 127 is a control character in ascii and not in ISO 8859-1
-        || b == b't' // tab is also allowed (even when < 32)
+        // This is essentially the US-ASCII limitation of
+        // https://www.rfc-editor.org/rfc/rfc9110#name-field-values. That is,
+        // visible ASCII characters (0x21-0x7e), space, and tab. We want to be
+        // able to pass this in an HTTP header without encoding.
+        b >= 32 && b < 127 || b == b'\t'
     }) {
         Ok(())
     } else {

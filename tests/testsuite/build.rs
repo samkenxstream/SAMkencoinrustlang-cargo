@@ -160,6 +160,30 @@ fn cargo_compile_manifest_path() {
 }
 
 #[cargo_test]
+fn chdir_gated() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .build();
+    p.cargo("-C foo build")
+        .cwd(p.root().parent().unwrap())
+        .with_stderr(
+            "error: the `-C` flag is unstable, \
+            pass `-Z unstable-options` on the nightly channel to enable it",
+        )
+        .with_status(101)
+        .run();
+    // No masquerade should also fail.
+    p.cargo("-C foo -Z unstable-options build")
+        .cwd(p.root().parent().unwrap())
+        .with_stderr(
+            "error: the `-C` flag is unstable, \
+            pass `-Z unstable-options` on the nightly channel to enable it",
+        )
+        .with_status(101)
+        .run();
+}
+
+#[cargo_test]
 fn cargo_compile_directory_not_cwd() {
     let p = project()
         .file("Cargo.toml", &basic_bin_manifest("foo"))
@@ -167,7 +191,8 @@ fn cargo_compile_directory_not_cwd() {
         .file(".cargo/config.toml", &"")
         .build();
 
-    p.cargo("-C foo build")
+    p.cargo("-Zunstable-options -C foo build")
+        .masquerade_as_nightly_cargo(&["chdir"])
         .cwd(p.root().parent().unwrap())
         .run();
     assert!(p.bin("foo").is_file());
@@ -181,7 +206,8 @@ fn cargo_compile_directory_not_cwd_with_invalid_config() {
         .file(".cargo/config.toml", &"!")
         .build();
 
-    p.cargo("-C foo build")
+    p.cargo("-Zunstable-options -C foo build")
+        .masquerade_as_nightly_cargo(&["chdir"])
         .cwd(p.root().parent().unwrap())
         .with_status(101)
         .with_stderr_contains(
@@ -639,7 +665,9 @@ fn cargo_compile_with_invalid_code() {
 
     p.cargo("build")
         .with_status(101)
-        .with_stderr_contains("[ERROR] could not compile `foo` due to previous error\n")
+        .with_stderr_contains(
+            "[ERROR] could not compile `foo` (bin \"foo\") due to previous error\n",
+        )
         .run();
     assert!(p.root().join("Cargo.lock").is_file());
 }
@@ -1370,6 +1398,7 @@ fn crate_env_vars() {
             license = "MIT OR Apache-2.0"
             license-file = "license.txt"
             rust-version = "1.61.0"
+            readme = "../../README.md"
 
             [[bin]]
             name = "foo-bar"
@@ -1395,6 +1424,7 @@ fn crate_env_vars() {
                 static LICENSE_FILE: &'static str = env!("CARGO_PKG_LICENSE_FILE");
                 static DESCRIPTION: &'static str = env!("CARGO_PKG_DESCRIPTION");
                 static RUST_VERSION: &'static str = env!("CARGO_PKG_RUST_VERSION");
+                static README: &'static str = env!("CARGO_PKG_README");
                 static BIN_NAME: &'static str = env!("CARGO_BIN_NAME");
                 static CRATE_NAME: &'static str = env!("CARGO_CRATE_NAME");
 
@@ -1414,6 +1444,7 @@ fn crate_env_vars() {
                      assert_eq!("license.txt", LICENSE_FILE);
                      assert_eq!("This is foo", DESCRIPTION);
                      assert_eq!("1.61.0", RUST_VERSION);
+                     assert_eq!("../../README.md", README);
                     let s = format!("{}.{}.{}-{}", VERSION_MAJOR,
                                     VERSION_MINOR, VERSION_PATCH, VERSION_PRE);
                     assert_eq!(s, VERSION);
@@ -3854,7 +3885,7 @@ fn compiler_json_error_format() {
                 },
                 "profile": {
                     "debug_assertions": true,
-                    "debuginfo": null,
+                    "debuginfo": 0,
                     "opt_level": "0",
                     "overflow_checks": true,
                     "test": false
@@ -5699,7 +5730,7 @@ fn signal_display() {
             "\
 [COMPILING] pm [..]
 [COMPILING] foo [..]
-[ERROR] could not compile `foo`
+[ERROR] could not compile `foo` [..]
 
 Caused by:
   process didn't exit successfully: `rustc [..]` (signal: 6, SIGABRT: process abort signal)

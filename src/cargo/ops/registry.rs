@@ -36,6 +36,7 @@ use crate::util::config::{Config, SslVersionConfig, SslVersionConfigRange};
 use crate::util::errors::CargoResult;
 use crate::util::important_paths::find_root_manifest_for_wd;
 use crate::util::{truncate_with_ellipsis, IntoUrl};
+use crate::util::{Progress, ProgressStyle};
 use crate::{drop_print, drop_println, version};
 
 /// Registry settings loaded from config files.
@@ -344,6 +345,7 @@ fn transmit(
         ref categories,
         ref badges,
         ref links,
+        ref rust_version,
     } = *manifest.metadata();
     let readme_content = readme
         .as_ref()
@@ -397,6 +399,7 @@ fn transmit(
                 license_file: license_file.clone(),
                 badges: badges.clone(),
                 links: links.clone(),
+                rust_version: rust_version.clone(),
             },
             tarball,
         )
@@ -442,13 +445,29 @@ fn wait_for_publish(
 ) -> CargoResult<()> {
     let version_req = format!("={}", pkg.version());
     let mut source = SourceConfigMap::empty(config)?.load(registry_src, &HashSet::new())?;
-    let source_description = source.describe();
+    // Disable the source's built-in progress bars. Repeatedly showing a bunch
+    // of independent progress bars can be a little confusing. There is an
+    // overall progress bar managed here.
+    source.set_quiet(true);
+    let source_description = source.source_id().to_string();
     let query = Dependency::parse(pkg.name(), Some(&version_req), registry_src)?;
 
     let now = std::time::Instant::now();
     let sleep_time = std::time::Duration::from_secs(1);
-    let mut logged = false;
-    loop {
+    let max = timeout.as_secs() as usize;
+    // Short does not include the registry name.
+    let short_pkg_description = format!("{} v{}", pkg.name(), pkg.version());
+    config.shell().status(
+        "Uploaded",
+        format!("{short_pkg_description} to {source_description}"),
+    )?;
+    config.shell().note(format!(
+        "Waiting for `{short_pkg_description}` to be available at {source_description}.\n\
+        You may press ctrl-c to skip waiting; the crate should be available shortly."
+    ))?;
+    let mut progress = Progress::with_style("Waiting", ProgressStyle::Ratio, config);
+    progress.tick_now(0, max, "")?;
+    let is_available = loop {
         {
             let _lock = config.acquire_package_cache_lock()?;
             // Force re-fetching the source
@@ -470,31 +489,30 @@ fn wait_for_publish(
                 }
             };
             if !summaries.is_empty() {
-                break;
+                break true;
             }
         }
 
-        if timeout < now.elapsed() {
+        let elapsed = now.elapsed();
+        if timeout < elapsed {
             config.shell().warn(format!(
-                "timed out waiting for `{}` to be in {}",
-                pkg.name(),
-                source_description
+                "timed out waiting for `{short_pkg_description}` to be available in {source_description}",
             ))?;
-            break;
+            config.shell().note(
+                "The registry may have a backlog that is delaying making the \
+                crate available. The crate should be available soon.",
+            )?;
+            break false;
         }
 
-        if !logged {
-            config.shell().status(
-                "Waiting",
-                format!(
-                    "on `{}` to propagate to {} (ctrl-c to wait asynchronously)",
-                    pkg.name(),
-                    source_description
-                ),
-            )?;
-            logged = true;
-        }
+        progress.tick_now(elapsed.as_secs() as usize, max, "")?;
         std::thread::sleep(sleep_time);
+    };
+    if is_available {
+        config.shell().status(
+            "Published",
+            format!("{short_pkg_description} at {source_description}"),
+        )?;
     }
 
     Ok(())
@@ -686,12 +704,17 @@ pub fn configure_http_handle(config: &Config, handle: &mut Easy) -> CargoResult<
                 InfoType::SslDataIn | InfoType::SslDataOut => return,
                 _ => return,
             };
+            let starts_with_ignore_case = |line: &str, text: &str| -> bool {
+                line[..line.len().min(text.len())].eq_ignore_ascii_case(text)
+            };
             match str::from_utf8(data) {
                 Ok(s) => {
                     for mut line in s.lines() {
-                        if line.starts_with("Authorization:") {
+                        if starts_with_ignore_case(line, "authorization:") {
                             line = "Authorization: [REDACTED]";
-                        } else if line[..line.len().min(10)].eq_ignore_ascii_case("set-cookie") {
+                        } else if starts_with_ignore_case(line, "h2h3 [authorization:") {
+                            line = "h2h3 [Authorization: [REDACTED]]";
+                        } else if starts_with_ignore_case(line, "set-cookie") {
                             line = "set-cookie: [REDACTED]";
                         }
                         log!(level, "http-debug: {} {}", prefix, line);
@@ -938,6 +961,20 @@ pub fn registry_logout(config: &Config, reg: Option<&str>) -> CargoResult<()> {
             reg_name
         ),
     )?;
+    let location = if source_ids.original.is_crates_io() {
+        "<https://crates.io/me>".to_string()
+    } else {
+        // The URL for the source requires network access to load the config.
+        // That could be a fairly heavy operation to perform just to provide a
+        // help message, so for now this just provides some generic text.
+        // Perhaps in the future this could have an API to fetch the config if
+        // it is cached, but avoid network access otherwise?
+        format!("the `{reg_name}` website")
+    };
+    config.shell().note(format!(
+        "This does not revoke the token on the registry server.\n    \
+        If you need to revoke the token, visit {location} and follow the instructions there."
+    ))?;
     Ok(())
 }
 

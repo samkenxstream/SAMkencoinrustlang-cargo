@@ -57,6 +57,10 @@ The publish endpoint is used to publish a new version of a crate. The server
 should validate the crate, make it available for download, and add it to the
 index.
 
+It is not required for the index to be updated before the successful response is sent.
+After a successful response, Cargo will poll the index for a short period of time to identify that the new crate has been added.
+If the crate does not appear in the index after a short period of time, then Cargo will display a warning letting the user know that the new crate is not yet available.
+
 The body of the data sent by Cargo is:
 
 - 32-bit unsigned little-endian integer of the length of JSON data.
@@ -157,7 +161,10 @@ considered as an exhaustive list of restrictions [crates.io] imposes.
     },
     // The `links` string value from the package's manifest, or null if not
     // specified. This field is optional and defaults to null.
-    "links": null
+    "links": null,
+    // The minimal supported Rust version (optional)
+    // This must be a valid version requirement without an operator (e.g. no `=`)
+    "rust_version": null
 }
 ```
 
@@ -301,6 +308,8 @@ A successful response includes the JSON object:
 {
     // Indicates the remove succeeded, always true.
     "ok": true
+    // A string to be displayed to the user. Currently ignored by cargo.
+    "msg": "owners successfully removed",
 }
 ```
 

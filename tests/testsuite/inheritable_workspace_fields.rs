@@ -172,7 +172,10 @@ fn inherit_own_workspace_fields() {
 [FINISHED] [..]
 [PACKAGED] [..]
 [UPLOADING] foo v1.2.3 [..]
-[UPDATING] [..]
+[UPLOADED] foo v1.2.3 to registry `crates-io`
+note: Waiting for `foo v1.2.3` to be available at registry `crates-io`.
+You may press ctrl-c to skip waiting; the crate should be available shortly.
+[PUBLISHED] foo v1.2.3 at registry `crates-io`
 ",
         )
         .run();
@@ -198,6 +201,7 @@ fn inherit_own_workspace_fields() {
           "readme": null,
           "readme_file": null,
           "repository": "https://github.com/example/example",
+          "rust_version": "1.60",
           "vers": "1.2.3"
           }
         "#,
@@ -318,7 +322,10 @@ fn inherit_own_dependencies() {
 [FINISHED] [..]
 [PACKAGED] [..]
 [UPLOADING] bar v0.2.0 [..]
-[UPDATING] [..]
+[UPLOADED] bar v0.2.0 to registry `crates-io`
+note: Waiting for `bar v0.2.0` to be available at registry `crates-io`.
+You may press ctrl-c to skip waiting; the crate should be available shortly.
+[PUBLISHED] bar v0.2.0 at registry `crates-io`
 ",
         )
         .run();
@@ -370,6 +377,7 @@ fn inherit_own_dependencies() {
           "readme": null,
           "readme_file": null,
           "repository": null,
+          "rust_version": null,
           "vers": "0.2.0"
           }
         "#,
@@ -460,7 +468,10 @@ fn inherit_own_detailed_dependencies() {
 [FINISHED] [..]
 [PACKAGED] [..]
 [UPLOADING] bar v0.2.0 [..]
-[UPDATING] [..]
+[UPLOADED] bar v0.2.0 to registry `crates-io`
+note: Waiting for `bar v0.2.0` to be available at registry `crates-io`.
+You may press ctrl-c to skip waiting; the crate should be available shortly.
+[PUBLISHED] bar v0.2.0 at registry `crates-io`
 ",
         )
         .run();
@@ -494,6 +505,7 @@ fn inherit_own_detailed_dependencies() {
           "readme": null,
           "readme_file": null,
           "repository": null,
+          "rust_version": null,
           "vers": "0.2.0"
           }
         "#,
@@ -696,7 +708,10 @@ fn inherit_workspace_fields() {
 [FINISHED] [..]
 [PACKAGED] [..]
 [UPLOADING] bar v1.2.3 [..]
-[UPDATING] [..]
+[UPLOADED] bar v1.2.3 to registry `crates-io`
+note: Waiting for `bar v1.2.3` to be available at registry `crates-io`.
+You may press ctrl-c to skip waiting; the crate should be available shortly.
+[PUBLISHED] bar v1.2.3 at registry `crates-io`
 ",
         )
         .run();
@@ -722,6 +737,7 @@ fn inherit_workspace_fields() {
           "readme": "README.md",
           "readme_file": "../README.md",
           "repository": "https://github.com/example/example",
+          "rust_version": "1.60",
           "vers": "1.2.3"
           }
         "#,
@@ -850,7 +866,10 @@ fn inherit_dependencies() {
 [FINISHED] [..]
 [PACKAGED] [..]
 [UPLOADING] bar v0.2.0 [..]
-[UPDATING] [..]
+[UPLOADED] bar v0.2.0 to registry `crates-io`
+note: Waiting for `bar v0.2.0` to be available at registry `crates-io`.
+You may press ctrl-c to skip waiting; the crate should be available shortly.
+[PUBLISHED] bar v0.2.0 at registry `crates-io`
 ",
         )
         .run();
@@ -902,6 +921,7 @@ fn inherit_dependencies() {
           "readme": null,
           "readme_file": null,
           "repository": null,
+          "rust_version": null,
           "vers": "0.2.0"
           }
         "#,
@@ -1254,7 +1274,9 @@ fn error_workspace_dependency_looked_for_workspace_itself() {
         .with_stderr(
             "\
 [WARNING] [CWD]/Cargo.toml: unused manifest key: workspace.dependencies.dep.workspace
-[WARNING] [CWD]/Cargo.toml: dependency (dep) specified without providing a local path, Git repository, or version to use. This will be considered an error in future versions
+[WARNING] [CWD]/Cargo.toml: dependency (dep) specified without providing a local path, Git repository, version, \
+or workspace dependency to use. \
+This will be considered an error in future versions
 [UPDATING] `dummy-registry` index
 [ERROR] no matching package named `dep` found
 location searched: registry `crates-io`
@@ -1574,7 +1596,9 @@ fn cannot_inherit_in_patch() {
         .with_stderr(
             "\
 [WARNING] [CWD]/Cargo.toml: unused manifest key: patch.crates-io.bar.workspace
-[WARNING] [CWD]/Cargo.toml: dependency (bar) specified without providing a local path, Git repository, or version to use. This will be considered an error in future versions
+[WARNING] [CWD]/Cargo.toml: dependency (bar) specified without providing a local path, Git repository, version, \
+or workspace dependency to use. \
+This will be considered an error in future versions
 [UPDATING] `dummy-registry` index
 [ERROR] failed to resolve patches for `https://github.com/rust-lang/crates.io-index`
 

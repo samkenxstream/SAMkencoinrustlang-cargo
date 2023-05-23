@@ -134,6 +134,7 @@ pub use self::job_state::JobState;
 use super::context::OutputFile;
 use super::timings::Timings;
 use super::{BuildContext, BuildPlan, CompileMode, Context, Unit};
+use crate::core::compiler::descriptive_pkg_name;
 use crate::core::compiler::future_incompat::{
     self, FutureBreakageItem, FutureIncompatReportPackage,
 };
@@ -486,7 +487,7 @@ impl<'cfg> JobQueue<'cfg> {
             timings: self.timings,
             tokens: Vec::new(),
             pending_queue: Vec::new(),
-            print: DiagnosticPrinter::new(cx.bcx.config),
+            print: DiagnosticPrinter::new(cx.bcx.config, &cx.bcx.rustc().workspace_wrapper),
             finished: 0,
             per_package_future_incompat_reports: Vec::new(),
         };
@@ -811,7 +812,7 @@ impl<'cfg> DrainState<'cfg> {
             );
             if !cx.bcx.build_config.build_plan {
                 // It doesn't really matter if this fails.
-                drop(cx.bcx.config.shell().status("Finished", message));
+                let _ = cx.bcx.config.shell().status("Finished", message);
                 future_incompat::save_and_display_report(
                     cx.bcx,
                     &self.per_package_future_incompat_reports,
@@ -835,7 +836,7 @@ impl<'cfg> DrainState<'cfg> {
         if new_err.print_always || err_state.count == 0 {
             crate::display_error(&new_err.error, shell);
             if err_state.count == 0 && !self.active.is_empty() {
-                drop(shell.warn("build failed, waiting for other jobs to finish..."));
+                let _ = shell.warn("build failed, waiting for other jobs to finish...");
             }
             err_state.count += 1;
         } else {
@@ -862,11 +863,11 @@ impl<'cfg> DrainState<'cfg> {
             .values()
             .map(|u| self.name_for_progress(u))
             .collect::<Vec<_>>();
-        drop(self.progress.tick_now(
+        let _ = self.progress.tick_now(
             self.finished,
             self.total_units,
             &format!(": {}", active_names.join(", ")),
-        ));
+        );
     }
 
     fn name_for_progress(&self, unit: &Unit) -> String {
@@ -1000,23 +1001,20 @@ impl<'cfg> DrainState<'cfg> {
             None | Some(_) => return,
         };
         let unit = &self.active[&id];
-        let mut message = format!("`{}` ({}", unit.pkg.name(), unit.target.description_named());
-        if unit.mode.is_rustc_test() && !(unit.target.is_test() || unit.target.is_bench()) {
-            message.push_str(" test");
-        } else if unit.mode.is_doc_test() {
-            message.push_str(" doctest");
-        } else if unit.mode.is_doc() {
-            message.push_str(" doc");
-        }
-        message.push_str(") generated ");
+        let mut message = descriptive_pkg_name(&unit.pkg.name(), &unit.target, &unit.mode);
+        message.push_str(" generated ");
         match count.total {
             1 => message.push_str("1 warning"),
-            n => drop(write!(message, "{} warnings", n)),
+            n => {
+                let _ = write!(message, "{} warnings", n);
+            }
         };
         match count.duplicates {
             0 => {}
             1 => message.push_str(" (1 duplicate)"),
-            n => drop(write!(message, " ({} duplicates)", n)),
+            n => {
+                let _ = write!(message, " ({} duplicates)", n);
+            }
         }
         // Only show the `cargo fix` message if its a local `Unit`
         if unit.is_local() {
@@ -1051,16 +1049,16 @@ impl<'cfg> DrainState<'cfg> {
                     if fixable > 1 {
                         suggestions.push_str("s")
                     }
-                    drop(write!(
+                    let _ = write!(
                         message,
                         " (run `{command} --{args}` to apply {suggestions})"
-                    ))
+                    );
                 }
             }
         }
         // Errors are ignored here because it is tricky to handle them
         // correctly, and they aren't important.
-        drop(config.shell().warn(message));
+        let _ = config.shell().warn(message);
     }
 
     fn finish(

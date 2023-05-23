@@ -1,13 +1,221 @@
 # Changelog
 
+## Cargo 1.71 (2023-07-13)
+[84b7041f...HEAD](https://github.com/rust-lang/cargo/compare/84b7041f...HEAD)
+
+### Added
+
+### Changed
+
+- ❗ Optimized the usage under `rustup`. When Cargo detects it will run `rustc`
+  pointing a rustup proxy, it'll try bypassing the proxy and use the underlying
+  binary directly. There are assumptions around the interaction with rustup and
+  `RUSTUP_TOOLCHAIN`. However, it's not expected to affect normal users.
+  [#11917](https://github.com/rust-lang/cargo/pull/11917)
+- ❗ When querying a package, Cargo tries only the original name, all hyphens,
+  and all underscores to handle misspellings. Previously, Cargo tried each
+  combination of hyphens and underscores, causing excessive requests to crates.io.
+  [#12083](https://github.com/rust-lang/cargo/pull/12083)
+- ❗ Disallow `RUSTUP_HOME` and `RUSTUP_TOOLCHAIN` in the `[env]` configuration
+  table. This is considered to be not a use case Cargo would like to support,
+  since it will likely cause problems or lead to confusion.
+  [#12101](https://github.com/rust-lang/cargo/pull/12101)
+  [#12107](https://github.com/rust-lang/cargo/pull/12107)
+- Better error message when getting an empty dependency table in Cargo.toml.
+  [#11997](https://github.com/rust-lang/cargo/pull/11997)
+- Use restricted Damerau-Levenshtein algorithm to provide typo suggestions.
+  [#11963](https://github.com/rust-lang/cargo/pull/11963)
+
+### Fixed
+
+- Corrected the bug report URL for `cargo clippy --fix`.
+  [#11882](https://github.com/rust-lang/cargo/pull/11882)
+
+### Nightly only
+
+- The `-Zbuild-std` breakage of missing features in `nightly-2023-05-04` has
+  been fixed in `nightly-2023-05-05`.
+  [#12088](https://github.com/rust-lang/cargo/pull/12088)
+- Recompile on profile rustflags changes.
+  [#11981](https://github.com/rust-lang/cargo/pull/11981)
+
+### Documentation
+
+### Internal
+
+- Cargo is now a Cargo workspace. We dogfood ourselves finally.
+  [#11851](https://github.com/rust-lang/cargo/pull/11851)
+  [#11994](https://github.com/rust-lang/cargo/pull/11994)
+  [#11996](https://github.com/rust-lang/cargo/pull/11996)
+- Allow win/mac credential managers to build on all platforms.
+  [#11993](https://github.com/rust-lang/cargo/pull/11993)
+- Use `openssl` only on non-Windows platforms.
+  [#11979](https://github.com/rust-lang/cargo/pull/11979)
+- A new, straightforward issue labels system for Cargo contributors.
+  [docs](https://doc.crates.io/contrib/issues.html)
+  [#11995](https://github.com/rust-lang/cargo/pull/11995)
+  [#12002](https://github.com/rust-lang/cargo/pull/12002)
+  [#12003](https://github.com/rust-lang/cargo/pull/12003)
+
+## Cargo 1.70 (2023-06-01)
+[9880b408...rust-1.70.0](https://github.com/rust-lang/cargo/compare/9880b408...rust-1.70.0)
+
+### Added
+
+- 🎉 Added `cargo logout` command for removing an API token from the registry locally.
+  [docs](https://doc.rust-lang.org/nightly/cargo/commands/cargo-logout.html)
+  [#11919](https://github.com/rust-lang/cargo/pull/11919)
+  [#11950](https://github.com/rust-lang/cargo/pull/11950)
+- Added `--ignore-rust-version` flag to `cargo install`.
+  [#11859](https://github.com/rust-lang/cargo/pull/11859)
+- The `CARGO_PKG_README` environment variable is now set to the path to the
+  README file when compiling a crate.
+  [#11645](https://github.com/rust-lang/cargo/pull/11645)
+- Cargo now displays richer information of Cargo target failed to compile.
+  [#11636](https://github.com/rust-lang/cargo/pull/11636)
+
+### Changed
+
+- 🎉 The `sparse` protocol is now the default protocol for crates.io!
+  ([RFC 2789](https://github.com/rust-lang/rfcs/blob/master/text/2789-sparse-index.md))
+  ([docs](https://doc.rust-lang.org/nightly/cargo/reference/registries.html#registry-protocols))
+  [#11791](https://github.com/rust-lang/cargo/pull/11791)
+  [#11783](https://github.com/rust-lang/cargo/pull/11783)
+- ❗ `cargo login` and `cargo logout` now uses the registry specified in
+  `registry.default`. This was an unintentional regression.
+  [#11949](https://github.com/rust-lang/cargo/pull/11949)
+- `cargo update` accurately shows `Downgrading` status when downgrading dependencies.
+  [#11839](https://github.com/rust-lang/cargo/pull/11839)
+- Added more information to HTTP errors to help with debugging.
+  [#11878](https://github.com/rust-lang/cargo/pull/11878)
+- Added delays to network retries in Cargo.
+  [#11881](https://github.com/rust-lang/cargo/pull/11881)
+- Refined `cargo puslish` message when waiting for a publish complete.
+  [#11713](https://github.com/rust-lang/cargo/pull/11713)
+- Better error message when `cargo install` from a git repository but found
+  multiple packages.
+  [#11835](https://github.com/rust-lang/cargo/pull/11835)
+
+### Fixed
+
+- Removed duplicates of possible values in `--charset` option of `cargo tree`.
+  [#11785](https://github.com/rust-lang/cargo/pull/11785)
+- Fixed `CARGO_CFG_` vars for configs defined both with and without value.
+  [#11790](https://github.com/rust-lang/cargo/pull/11790)
+- Broke endless loop on cyclic features in added dependency in `cargo add`.
+  [#11805](https://github.com/rust-lang/cargo/pull/11805)
+- Don't panic when [`patch`] involved in dependency resolution results in a conflict.
+  [#11770](https://github.com/rust-lang/cargo/pull/11770)
+- Fixed credential token format validation.
+  [#11951](https://github.com/rust-lang/cargo/pull/11951)
+- Added the missing token format validation on publish.
+  [#11952](https://github.com/rust-lang/cargo/pull/11952)
+- Fixed case mismatches when looking up env vars in the Config snapshot.
+  [#11824](https://github.com/rust-lang/cargo/pull/11824)
+- `cargo new` generates the correct `.hgignore` aligning semantics with other
+  VCS ignore files.
+  [#11855](https://github.com/rust-lang/cargo/pull/11855)
+- Stopped doing unnecessary fuzzy registry index queries. This significantly
+  reduces the amount of HTTP requests to remote registries for crates
+  containing `-` or `_` in their names.
+  [#11936](https://github.com/rust-lang/cargo/pull/11936)
+  [#11937](https://github.com/rust-lang/cargo/pull/11937)
+
+### Nightly only
+
+- Added `-Zdirect-minimal-versions`. This behaves like `-Zminimal-versions` but
+  only for direct dependencies.
+  ([docs](https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#direct-minimal-versions))
+  [#11688](https://github.com/rust-lang/cargo/pull/11688)
+- Added `-Zgitoxide` which switches all `git fetch` operation in Cargo to
+  use `gitoxide` crate. This is still an MVP but could improve the performance
+  up to 2 times.
+  ([docs](https://doc.rust-lang.org/nightly/cargo/reference/unstable.html##gitoxide))
+  [#11448](https://github.com/rust-lang/cargo/pull/11448)
+  [#11800](https://github.com/rust-lang/cargo/pull/11800)
+  [#11822](https://github.com/rust-lang/cargo/pull/11822)
+  [#11830](https://github.com/rust-lang/cargo/pull/11830)
+- Removed `-Zjobserver-per-rustc`. Its rustc counterpart never got landed.
+  [#11764](https://github.com/rust-lang/cargo/pull/11764)
+
+### Documentation
+
+- Cleaned-up unstable documentation.
+  [#11793](https://github.com/rust-lang/cargo/pull/11793)
+- Enhanced the documentation of timing report with graphs.
+  [#11798](https://github.com/rust-lang/cargo/pull/11798)
+- Clarified requirements about the state of the registry index after publish.
+  [#11926](https://github.com/rust-lang/cargo/pull/11926)
+- Clarified docs on `-C` that it appears before the command.
+  [#11947](https://github.com/rust-lang/cargo/pull/11947)
+- Clarified working directory behaviour for `cargo test`, `cargo bench` and
+  `cargo run`.
+  [#11901](https://github.com/rust-lang/cargo/pull/11901)
+- Fixed the doc of `registries.name.index` configuration.
+  [#11880](https://github.com/rust-lang/cargo/pull/11880)
+- Notice for potential unexpected shell expansions in help text of `cargo-add`.
+  [#11826](https://github.com/rust-lang/cargo/pull/11826)
+- Updated external-tools JSON docs.
+  [#11918](https://github.com/rust-lang/cargo/pull/11918)
+- Call out the differences between the index JSON and the API or metadata. 
+  [#11927](https://github.com/rust-lang/cargo/pull/11927)
+- Consistently use `@` when mentioning pkgid format.
+  [#11956](https://github.com/rust-lang/cargo/pull/11956)
+- Enhanced Cargo Contributor Guide.
+  [#11825](https://github.com/rust-lang/cargo/pull/11825)
+  [#11842](https://github.com/rust-lang/cargo/pull/11842)
+  [#11869](https://github.com/rust-lang/cargo/pull/11869)
+  [#11876](https://github.com/rust-lang/cargo/pull/11876)
+- Moved a part of Cargo Contributor Guide to Cargo API documentation.
+  [docs](https://doc.rust-lang.org/nightly/nightly-rustc/cargo)
+  [#11809](https://github.com/rust-lang/cargo/pull/11809)
+  [#11841](https://github.com/rust-lang/cargo/pull/11841)
+  [#11850](https://github.com/rust-lang/cargo/pull/11850)
+  [#11870](https://github.com/rust-lang/cargo/pull/11870)
+- Cargo team now arranges
+  [office hours](https://github.com/rust-lang/cargo/wiki/Office-Hours)!
+  [#11903](https://github.com/rust-lang/cargo/pull/11903)
+
+### Internal
+
+- Switched to `sha2` crate for SHA256 calculation.
+  [#11795](https://github.com/rust-lang/cargo/pull/11795)
+  [#11807](https://github.com/rust-lang/cargo/pull/11807)
+- Switched benchsuite to the index archive.
+  [#11933](https://github.com/rust-lang/cargo/pull/11933)
+- Updated to `base64` 0.21.0.
+  [#11796](https://github.com/rust-lang/cargo/pull/11796)
+- Updated to `curl-sys` 0.4.61, which corresponds to curl 8.0.1.
+  [#11871](https://github.com/rust-lang/cargo/pull/11871)
+- Updated to `proptest` 1.1.0.
+  [#11886](https://github.com/rust-lang/cargo/pull/11886)
+- Updated to `git2` 0.17.0, which corresponds to libgit2 1.6.3.
+  [#11928](https://github.com/rust-lang/cargo/pull/11928)
+- Updated to `clap` 4.2.
+  [#11904](https://github.com/rust-lang/cargo/pull/11904)
+- Integrated `cargo-deny` in Cargo its own CI pipeline.
+  [#11761](https://github.com/rust-lang/cargo/pull/11761)
+- Made non-blocking IO calls more robust.
+  [#11624](https://github.com/rust-lang/cargo/pull/11624)
+- Dropped `derive` feature from `serde` in `cargo-platform`.
+  [#11915](https://github.com/rust-lang/cargo/pull/11915)
+- Replaced `std::fs::canonicalize` with a more robust `try_canonicalize`.
+  [#11866](https://github.com/rust-lang/cargo/pull/11866)
+- Enabled clippy warning on `disallowed_methods` for `std::env::var` and friends.
+  [#11828](https://github.com/rust-lang/cargo/pull/11828)
+
 ## Cargo 1.69 (2023-04-20)
-[985d561f...HEAD](https://github.com/rust-lang/cargo/compare/985d561f...HEAD)
+[985d561f...rust-1.69.0](https://github.com/rust-lang/cargo/compare/985d561f...rust-1.69.0)
 
 ### Added
 
 - Cargo now suggests `cargo fix` or `cargo clippy --fix`
-  when compilation warnings/errors can be auto-fixed.
+  when compilation warnings are auto-fixable.
   [#11558](https://github.com/rust-lang/cargo/pull/11558)
+- Cargo now suggests `cargo add` if you try to install a library crate.
+  [#11410](https://github.com/rust-lang/cargo/pull/11410)
+- Cargo now sets the `CARGO_BIN_NAME` environment variable also for binary examples.
+  [#11705](https://github.com/rust-lang/cargo/pull/11705)
 
 ### Changed
 
@@ -15,25 +223,143 @@
   and an inherited dependency of a member has `default-features = true`,
   Cargo will enable default features of that dependency.
   [#11409](https://github.com/rust-lang/cargo/pull/11409)
+- ❗ Deny `CARGO_HOME` in `[env]` configuration table. Cargo itself doesn't
+  pick up this value, but recursive calls to cargo would, which was not intended.
+  [#11644](https://github.com/rust-lang/cargo/pull/11644)
+- ❗ Debuginfo for build dependencies is now off if not explicitly set. This is
+  expected to improve the overall build time.
+  [#11252](https://github.com/rust-lang/cargo/pull/11252)
+- Cargo now emits errors on invalid alphanumeric characters in a registry token.
+  [#11600](https://github.com/rust-lang/cargo/pull/11600)
 - `cargo add` now checks only the order of `[dependencies]`
   without considering `[dependencies.*]`.
   [#11612](https://github.com/rust-lang/cargo/pull/11612)
-- Several documentation improvements.
-  [#11576](https://github.com/rust-lang/cargo/pull/11576)
-  [#11604](https://github.com/rust-lang/cargo/pull/11604)
-  [#11620](https://github.com/rust-lang/cargo/pull/11620)
-  [#11603](https://github.com/rust-lang/cargo/pull/11603)
+- Cargo now respects the new jobserver IPC style in GNU Make 4.4, by updating
+  its dependency `jobserver`.
+  [#11767](https://github.com/rust-lang/cargo/pull/11767)
+- `cargo install` now reports required features when no binary meets its requirements.
+  [#11647](https://github.com/rust-lang/cargo/pull/11647)
 
 ### Fixed
 
+- Uplifted `.dwp` DWARF package file next to the executable for debuggers to
+  locate them.
+  [#11572](https://github.com/rust-lang/cargo/pull/11572)
 - Fixed build scripts triggering recompiles when a `rerun-if-changed` points to
   a directory whose mtime is not preserved by the filesystem.
   [#11613](https://github.com/rust-lang/cargo/pull/11613)
 - Fixed panics when using dependencies from `[workspace.dependencies]`
   for `[patch]`. This usage is not supposed to be supported.
   [#11565](https://github.com/rust-lang/cargo/pull/11565)
+  [#11630](https://github.com/rust-lang/cargo/pull/11630)
+- Fixed `cargo report` saving the same future-incompat reports multiple times.
+  [#11648](https://github.com/rust-lang/cargo/pull/11648)
+- Fixed the incorrect inference of a directory ending with `.rs` as a file.
+  [#11678](https://github.com/rust-lang/cargo/pull/11678)
+- Fixed `.cargo-ok` file being truncated wrongly, preventing from using a dependency.
+  [#11665](https://github.com/rust-lang/cargo/pull/11665)
+  [#11724](https://github.com/rust-lang/cargo/pull/11724)
 
 ### Nightly only
+
+- `-Zrustdoc-scrape-example` must fail with bad build script.
+  [#11694](https://github.com/rust-lang/cargo/pull/11694)
+- Updated 1password credential manager integration to the version 2 CLI.
+  [#11692](https://github.com/rust-lang/cargo/pull/11692)
+- Emit an error message for transitive artifact dependencies with targets the
+  package doesn't directly interact with.
+  [#11643](https://github.com/rust-lang/cargo/pull/11643)
+- Added `-C` flag for changing current dir before build starts.
+  [#10952](https://github.com/rust-lang/cargo/pull/10952)
+
+### Documentation
+
+- Clarified the difference between `CARGO_CRATE_NAME` and `CARGO_PKG_NAME`.
+  [#11576](https://github.com/rust-lang/cargo/pull/11576)
+- Added links to the Target section of the glossary for occurences of target triple.
+  [#11603](https://github.com/rust-lang/cargo/pull/11603)
+- Described how the current resolver sometimes duplicates depenencies.
+  [#11604](https://github.com/rust-lang/cargo/pull/11604)
+- Added a note about verifying your email address on crates.io.
+  [#11620](https://github.com/rust-lang/cargo/pull/11620)
+- Mention current default value in `publish.timeout` docs.
+  [#11652](https://github.com/rust-lang/cargo/pull/11652)
+- More doc comments for `cargo::core::compiler` modules.
+  [#11669](https://github.com/rust-lang/cargo/pull/11669)
+  [#11703](https://github.com/rust-lang/cargo/pull/11703)
+  [#11711](https://github.com/rust-lang/cargo/pull/11711)
+  [#11758](https://github.com/rust-lang/cargo/pull/11758)
+- Added more guidance on how to implement unstable features.
+  [#11675](https://github.com/rust-lang/cargo/pull/11675)
+- Fixed unstable chapter layout for `codegen-backend`.
+  [#11676](https://github.com/rust-lang/cargo/pull/11676)
+- Add a link to LTO doc.
+  [#11701](https://github.com/rust-lang/cargo/pull/11701)
+- Added documentation for the configuration discovery of `cargo install`
+  to the man pages
+  [#11763](https://github.com/rust-lang/cargo/pull/11763)
+- Documented `-F` flag as an alias for `--features` in `cargo add`.
+  [#11774](https://github.com/rust-lang/cargo/pull/11774)
+
+### Internal
+
+- Disable network SSH tests on Windows.
+  [#11610](https://github.com/rust-lang/cargo/pull/11610)
+- Made some blocking tests non-blocking.
+  [#11650](https://github.com/rust-lang/cargo/pull/11650)
+- Deny warnings in CI, not locally.
+  [#11699](https://github.com/rust-lang/cargo/pull/11699)
+- Re-export `cargo_new::NewProjectKind` as public.
+  [#11700](https://github.com/rust-lang/cargo/pull/11700)
+- Made dependencies in alphabetical order.
+  [#11719](https://github.com/rust-lang/cargo/pull/11719)
+- Switched some tests from `build` to `check`.
+  [#11725](https://github.com/rust-lang/cargo/pull/11725)
+- Consolidated how Cargo reads environments variables internally.
+  [#11727](https://github.com/rust-lang/cargo/pull/11727)
+  [#11754](https://github.com/rust-lang/cargo/pull/11754)
+- Fixed tests with nondeterministic ordering
+  [#11766](https://github.com/rust-lang/cargo/pull/11766)
+- Added a test to verify the intermediate artifacts persist in the temp directory.
+  [#11771](https://github.com/rust-lang/cargo/pull/11771)
+- Updated cross test instructions for aarch64-apple-darwin.
+  [#11663](https://github.com/rust-lang/cargo/pull/11663)
+- Updated to `toml` v0.6 and `toml_edit` v0.18 for TOML manipulations.
+  [#11618](https://github.com/rust-lang/cargo/pull/11618)
+- Updated to `clap` v4.1.3.
+  [#11619](https://github.com/rust-lang/cargo/pull/11619)
+- Replaced `winapi` with `windows-sys` crate for Windows bindings.
+  [#11656](https://github.com/rust-lang/cargo/pull/11656)
+- Reused `url` crate for percent encoding instead of `percent-encoding`.
+  [#11750](https://github.com/rust-lang/cargo/pull/11750)
+- Cargo contributors can benefit from smart punctuations when writing
+  documentations, e.g., `---` is auto-converted into an em dash.
+  ([docs](https://rust-lang.github.io/mdBook/format/markdown.html#smart-punctuation))
+  [#11646](https://github.com/rust-lang/cargo/pull/11646)
+  [#11715](https://github.com/rust-lang/cargo/pull/11715)
+- Cargo's CI pipeline now covers macOS on nightly.
+  [#11712](https://github.com/rust-lang/cargo/pull/11712)
+- Re-enabled some clippy lints in Cargo itself.
+  [#11722](https://github.com/rust-lang/cargo/pull/11722)
+- Enabled sparse protocol in Cargo's CI.
+  [#11632](https://github.com/rust-lang/cargo/pull/11632)
+- Pull requests in Cargo now get autolabelled for label `A-*` and `Command-*`.
+  [#11664](https://github.com/rust-lang/cargo/pull/11664)
+  [#11679](https://github.com/rust-lang/cargo/pull/11679)
+
+## Cargo 1.68.2 (2023-03-28)
+[115f3455...rust-1.68.0](https://github.com/rust-lang/cargo/compare/115f3455...rust-1.68.0)
+
+- Updated the GitHub RSA SSH host key bundled within cargo.
+  The key was [rotated by
+  GitHub](https://github.blog/2023-03-23-we-updated-our-rsa-ssh-host-key/) on
+  2023-03-24 after the old one leaked.
+  [#11883](https://github.com/rust-lang/cargo/pull/11883)
+- Added support for SSH known hosts marker `@revoked`.
+  [#11635](https://github.com/rust-lang/cargo/pull/11635)
+- Marked the old GitHub RSA host key as revoked. This will prevent Cargo from
+  accepting the leaked key even when trusted by the system.
+  [#11889](https://github.com/rust-lang/cargo/pull/11889)
 
 ## Cargo 1.68 (2023-03-09)
 [f6e737b1...rust-1.68.0](https://github.com/rust-lang/cargo/compare/f6e737b1...rust-1.68.0)
@@ -46,6 +372,8 @@
   ([docs](https://doc.rust-lang.org/nightly/cargo/reference/registries.html#registry-protocols))
   [#11224](https://github.com/rust-lang/cargo/pull/11224)
   [#11480](https://github.com/rust-lang/cargo/pull/11480)
+  [#11733](https://github.com/rust-lang/cargo/pull/11733)
+  [#11756](https://github.com/rust-lang/cargo/pull/11756)
 - 🎉 `home` crate is now a subcrate in `rust-lang/cargo` repository. Welcome!
   [#11359](https://github.com/rust-lang/cargo/pull/11359)
   [#11481](https://github.com/rust-lang/cargo/pull/11481)
@@ -104,6 +432,8 @@
   which previously made Cargo fail to compile on certain platforms.
   [#11347](https://github.com/rust-lang/cargo/pull/11347)
   [#11633](https://github.com/rust-lang/cargo/pull/11633)
+- Don't panic in Windows headless session with really long file names.
+  [#11759](https://github.com/rust-lang/cargo/pull/11759)
 
 ### Nightly only
 

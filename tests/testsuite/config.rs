@@ -3,7 +3,7 @@
 use cargo::core::{PackageIdSpec, Shell};
 use cargo::util::config::{self, Config, Definition, SslVersionConfig, StringList};
 use cargo::util::interning::InternedString;
-use cargo::util::toml::{self as cargo_toml, VecStringOrBool as VSOB};
+use cargo::util::toml::{self as cargo_toml, TomlDebugInfo, VecStringOrBool as VSOB};
 use cargo::CargoResult;
 use cargo_test_support::compare;
 use cargo_test_support::{panic_error, paths, project, symlink_supported, t};
@@ -211,6 +211,31 @@ f1 = 123
     assert_eq!(s, S { f1: Some(456) });
 }
 
+#[cfg(windows)]
+#[cargo_test]
+fn environment_variable_casing() {
+    // Issue #11814: Environment variable names are case-insensitive on Windows.
+    let config = ConfigBuilder::new()
+        .env("Path", "abc")
+        .env("Two-Words", "abc")
+        .env("two_words", "def")
+        .build();
+
+    let var = config.get_env("PATH").unwrap();
+    assert_eq!(var, String::from("abc"));
+
+    let var = config.get_env("path").unwrap();
+    assert_eq!(var, String::from("abc"));
+
+    let var = config.get_env("TWO-WORDS").unwrap();
+    assert_eq!(var, String::from("abc"));
+
+    // Make sure that we can still distinguish between dashes and underscores
+    // in variable names.
+    let var = config.get_env("Two_Words").unwrap();
+    assert_eq!(var, String::from("def"));
+}
+
 #[cargo_test]
 fn config_works_with_extension() {
     write_config_toml(
@@ -376,7 +401,7 @@ lto = false
             opt_level: Some(cargo_toml::TomlOptLevel("s".to_string())),
             lto: Some(cargo_toml::StringOrBool::Bool(true)),
             codegen_units: Some(5),
-            debug: Some(cargo_toml::U32OrBool::Bool(true)),
+            debug: Some(cargo_toml::TomlDebugInfo::Full),
             debug_assertions: Some(true),
             rpath: Some(true),
             panic: Some("abort".to_string()),
@@ -419,7 +444,7 @@ fn profile_env_var_prefix() {
         .build();
     let p: cargo_toml::TomlProfile = config.get("profile.dev").unwrap();
     assert_eq!(p.debug_assertions, None);
-    assert_eq!(p.debug, Some(cargo_toml::U32OrBool::U32(1)));
+    assert_eq!(p.debug, Some(cargo_toml::TomlDebugInfo::Limited));
 
     let config = ConfigBuilder::new()
         .env("CARGO_PROFILE_DEV_DEBUG_ASSERTIONS", "false")
@@ -427,7 +452,7 @@ fn profile_env_var_prefix() {
         .build();
     let p: cargo_toml::TomlProfile = config.get("profile.dev").unwrap();
     assert_eq!(p.debug_assertions, Some(false));
-    assert_eq!(p.debug, Some(cargo_toml::U32OrBool::U32(1)));
+    assert_eq!(p.debug, Some(cargo_toml::TomlDebugInfo::Limited));
 }
 
 #[cargo_test]
@@ -1486,7 +1511,7 @@ fn all_profile_options() {
         lto: Some(cargo_toml::StringOrBool::String("thin".to_string())),
         codegen_backend: Some(InternedString::new("example")),
         codegen_units: Some(123),
-        debug: Some(cargo_toml::U32OrBool::U32(1)),
+        debug: Some(cargo_toml::TomlDebugInfo::Limited),
         split_debuginfo: Some("packed".to_string()),
         debug_assertions: Some(true),
         rpath: Some(true),
@@ -1568,4 +1593,61 @@ known-hosts = [
         kh[3].definition,
         Definition::Environment("CARGO_NET_SSH_KNOWN_HOSTS".to_string())
     );
+}
+
+#[cargo_test]
+fn debuginfo_parsing() {
+    let config = ConfigBuilder::new().build();
+    let p: cargo_toml::TomlProfile = config.get("profile.dev").unwrap();
+    assert_eq!(p.debug, None);
+
+    let env_test_cases = [
+        (TomlDebugInfo::None, ["false", "0", "none"].as_slice()),
+        (TomlDebugInfo::LineDirectivesOnly, &["line-directives-only"]),
+        (TomlDebugInfo::LineTablesOnly, &["line-tables-only"]),
+        (TomlDebugInfo::Limited, &["1", "limited"]),
+        (TomlDebugInfo::Full, &["true", "2", "full"]),
+    ];
+    for (expected, config_strs) in env_test_cases {
+        for &val in config_strs {
+            let config = ConfigBuilder::new()
+                .env("CARGO_PROFILE_DEV_DEBUG", val)
+                .build();
+            let debug: TomlDebugInfo = config.get("profile.dev.debug").unwrap();
+            assert_eq!(debug, expected, "failed to parse {val}");
+        }
+    }
+
+    let toml_test_cases = [
+        (TomlDebugInfo::None, ["false", "0", "\"none\""].as_slice()),
+        (
+            TomlDebugInfo::LineDirectivesOnly,
+            &["\"line-directives-only\""],
+        ),
+        (TomlDebugInfo::LineTablesOnly, &["\"line-tables-only\""]),
+        (TomlDebugInfo::Limited, &["1", "\"limited\""]),
+        (TomlDebugInfo::Full, &["true", "2", "\"full\""]),
+    ];
+    for (expected, config_strs) in toml_test_cases {
+        for &val in config_strs {
+            let config = ConfigBuilder::new()
+                .config_arg(format!("profile.dev.debug={val}"))
+                .build();
+            let debug: TomlDebugInfo = config.get("profile.dev.debug").unwrap();
+            assert_eq!(debug, expected, "failed to parse {val}");
+        }
+    }
+
+    let toml_err_cases = ["\"\"", "\"unrecognized\"", "3"];
+    for err_val in toml_err_cases {
+        let config = ConfigBuilder::new()
+            .config_arg(format!("profile.dev.debug={err_val}"))
+            .build();
+        let err = config
+            .get::<TomlDebugInfo>("profile.dev.debug")
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .ends_with("could not load config key `profile.dev.debug`"));
+    }
 }

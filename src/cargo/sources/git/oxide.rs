@@ -29,7 +29,11 @@ pub fn with_retry_and_progress(
 ) -> CargoResult<()> {
     std::thread::scope(|s| {
         let mut progress_bar = Progress::new("Fetch", config);
-        network::with_retry(config, || {
+        let is_shallow = config
+            .cli_unstable()
+            .gitoxide
+            .map_or(false, |gix| gix.shallow_deps || gix.shallow_index);
+        network::retry::with_retry(config, || {
             let progress_root: Arc<gix::progress::tree::Root> =
                 gix::progress::tree::root::Options {
                     initial_capacity: 10,
@@ -50,7 +54,7 @@ pub fn with_retry_and_progress(
                 );
                 amend_authentication_hints(res, urls.get_mut().take())
             });
-            translate_progress_to_bar(&mut progress_bar, root)?;
+            translate_progress_to_bar(&mut progress_bar, root, is_shallow)?;
             thread.join().expect("no panic in scoped thread")
         })
     })
@@ -59,7 +63,9 @@ pub fn with_retry_and_progress(
 fn translate_progress_to_bar(
     progress_bar: &mut Progress<'_>,
     root: Weak<gix::progress::tree::Root>,
+    is_shallow: bool,
 ) -> CargoResult<()> {
+    let remote_progress: gix::progress::Id = gix::remote::fetch::ProgressId::RemoteProgress.into();
     let read_pack_bytes: gix::progress::Id =
         gix::odb::pack::bundle::write::ProgressId::ReadPackBytes.into();
     let delta_index_objects: gix::progress::Id =
@@ -69,60 +75,102 @@ fn translate_progress_to_bar(
 
     // We choose `N=10` here to make a `300ms * 10slots ~= 3000ms`
     // sliding window for tracking the data transfer rate (in bytes/s).
-    let mut last_update = Instant::now();
-    let mut counter = MetricsCounter::<10>::new(0, last_update);
+    let mut last_percentage_update = Instant::now();
+    let mut last_fast_update = Instant::now();
+    let mut counter = MetricsCounter::<10>::new(0, last_percentage_update);
 
     let mut tasks = Vec::with_capacity(10);
-    let update_interval = std::time::Duration::from_millis(300);
-    let short_check_interval = Duration::from_millis(50);
+    let slow_check_interval = std::time::Duration::from_millis(300);
+    let fast_check_interval = Duration::from_millis(50);
+    let sleep_interval = Duration::from_millis(10);
+    debug_assert_eq!(
+        slow_check_interval.as_millis() % fast_check_interval.as_millis(),
+        0,
+        "progress should be smoother by keeping these as multiples of each other"
+    );
+    debug_assert_eq!(
+        fast_check_interval.as_millis() % sleep_interval.as_millis(),
+        0,
+        "progress should be smoother by keeping these as multiples of each other"
+    );
 
+    let num_phases = if is_shallow { 3 } else { 2 }; // indexing + delta-resolution, both with same amount of objects to handle
     while let Some(root) = root.upgrade() {
-        let not_yet = last_update.elapsed() < update_interval;
-        if not_yet {
-            std::thread::sleep(short_check_interval);
+        std::thread::sleep(sleep_interval);
+        let needs_update = last_fast_update.elapsed() >= fast_check_interval;
+        if !needs_update {
+            continue;
         }
+        let now = Instant::now();
+        last_fast_update = now;
+
         root.sorted_snapshot(&mut tasks);
 
         fn progress_by_id(
             id: gix::progress::Id,
             task: &gix::progress::Task,
-        ) -> Option<&gix::progress::Value> {
-            (task.id == id).then(|| task.progress.as_ref()).flatten()
+        ) -> Option<(&str, &gix::progress::Value)> {
+            (task.id == id)
+                .then(|| task.progress.as_ref())
+                .flatten()
+                .map(|value| (task.name.as_str(), value))
         }
         fn find_in<K>(
             tasks: &[(K, gix::progress::Task)],
-            cb: impl Fn(&gix::progress::Task) -> Option<&gix::progress::Value>,
-        ) -> Option<&gix::progress::Value> {
+            cb: impl Fn(&gix::progress::Task) -> Option<(&str, &gix::progress::Value)>,
+        ) -> Option<(&str, &gix::progress::Value)> {
             tasks.iter().find_map(|(_, t)| cb(t))
         }
 
-        if let Some(objs) = find_in(&tasks, |t| progress_by_id(resolve_objects, t)) {
-            // Resolving deltas.
+        if let Some((_, objs)) = find_in(&tasks, |t| progress_by_id(resolve_objects, t)) {
+            // Phase 3: Resolving deltas.
             let objects = objs.step.load(Ordering::Relaxed);
             let total_objects = objs.done_at.expect("known amount of objects");
             let msg = format!(", ({objects}/{total_objects}) resolving deltas");
 
-            progress_bar.tick(objects, total_objects, &msg)?;
+            progress_bar.tick(
+                (total_objects * (num_phases - 1)) + objects,
+                total_objects * num_phases,
+                &msg,
+            )?;
         } else if let Some((objs, read_pack)) =
             find_in(&tasks, |t| progress_by_id(read_pack_bytes, t)).and_then(|read| {
                 find_in(&tasks, |t| progress_by_id(delta_index_objects, t))
-                    .map(|delta| (delta, read))
+                    .map(|delta| (delta.1, read.1))
             })
         {
-            // Receiving objects.
+            // Phase 2: Receiving objects.
             let objects = objs.step.load(Ordering::Relaxed);
             let total_objects = objs.done_at.expect("known amount of objects");
             let received_bytes = read_pack.step.load(Ordering::Relaxed);
 
-            let now = Instant::now();
-            if !not_yet {
+            let needs_percentage_update = last_percentage_update.elapsed() >= slow_check_interval;
+            if needs_percentage_update {
                 counter.add(received_bytes, now);
-                last_update = now;
+                last_percentage_update = now;
             }
             let (rate, unit) = human_readable_bytes(counter.rate() as u64);
             let msg = format!(", {rate:.2}{unit}/s");
 
-            progress_bar.tick(objects, total_objects, &msg)?;
+            progress_bar.tick(
+                (total_objects * (num_phases - 2)) + objects,
+                total_objects * num_phases,
+                &msg,
+            )?;
+        } else if let Some((action, remote)) =
+            find_in(&tasks, |t| progress_by_id(remote_progress, t))
+        {
+            if !is_shallow {
+                continue;
+            }
+            // phase 1: work on the remote side
+
+            // Resolving deltas.
+            let objects = remote.step.load(Ordering::Relaxed);
+            if let Some(total_objects) = remote.done_at {
+                let msg = format!(", ({objects}/{total_objects}) {action}");
+                progress_bar.tick(objects, total_objects * num_phases, &msg)?;
+            }
         }
     }
     Ok(())
@@ -215,7 +263,7 @@ pub fn open_repo(
 ) -> Result<gix::Repository, gix::open::Error> {
     gix::open_opts(repo_path, {
         let mut opts = gix::open::Options::default();
-        opts.permissions.config = gix::permissions::Config::all();
+        opts.permissions.config = gix::open::permissions::Config::all();
         opts.permissions.config.git_binary = purpose.needs_git_binary_config();
         opts.with(gix::sec::Trust::Full)
             .config_overrides(config_overrides)

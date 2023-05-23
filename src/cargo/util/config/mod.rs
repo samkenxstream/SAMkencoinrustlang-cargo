@@ -72,9 +72,9 @@ use crate::core::{features, CliUnstable, Shell, SourceId, Workspace, WorkspaceRo
 use crate::ops::{self, RegistryCredentialConfig};
 use crate::util::auth::Secret;
 use crate::util::errors::CargoResult;
-use crate::util::validate_package_name;
 use crate::util::CanonicalUrl;
 use crate::util::{internal, toml as cargo_toml};
+use crate::util::{try_canonicalize, validate_package_name};
 use crate::util::{FileLock, Filesystem, IntoUrl, IntoUrlWithBase, Rustc};
 use anyhow::{anyhow, bail, format_err, Context as _};
 use cargo_util::paths;
@@ -99,6 +99,9 @@ pub use path::{ConfigRelativePath, PathAndArgs};
 
 mod target;
 pub use target::{TargetCfgConfig, TargetConfig};
+
+mod environment;
+use environment::Env;
 
 // Helper macro for creating typed access methods.
 macro_rules! get_value_typed {
@@ -199,10 +202,8 @@ pub struct Config {
     creation_time: Instant,
     /// Target Directory via resolved Cli parameter
     target_dir: Option<Filesystem>,
-    /// Environment variables, separated to assist testing.
-    env: HashMap<OsString, OsString>,
-    /// Environment variables, converted to uppercase to check for case mismatch
-    upper_case_env: HashMap<String, String>,
+    /// Environment variable snapshot.
+    env: Env,
     /// Tracks which sources have been updated to avoid multiple updates.
     updated_sources: LazyCell<RefCell<HashSet<SourceId>>>,
     /// Cache of credentials from configuration or credential providers.
@@ -260,16 +261,10 @@ impl Config {
             }
         });
 
-        let env: HashMap<_, _> = env::vars_os().collect();
+        let env = Env::new();
 
-        let upper_case_env = env
-            .iter()
-            .filter_map(|(k, _)| k.to_str()) // Only keep valid UTF-8
-            .map(|k| (k.to_uppercase().replace("-", "_"), k.to_owned()))
-            .collect();
-
-        let cache_key: &OsStr = "CARGO_CACHE_RUSTC_INFO".as_ref();
-        let cache_rustc_info = match env.get(cache_key) {
+        let cache_key = "CARGO_CACHE_RUSTC_INFO";
+        let cache_rustc_info = match env.get_env_os(cache_key) {
             Some(cache) => cache != "0",
             _ => true,
         };
@@ -303,7 +298,6 @@ impl Config {
             creation_time: Instant::now(),
             target_dir: None,
             env,
-            upper_case_env,
             updated_sources: LazyCell::new(),
             credential_cache: LazyCell::new(),
             package_cache_lock: RefCell::new(None),
@@ -394,7 +388,7 @@ impl Config {
     /// Gets the path to the `rustdoc` executable.
     pub fn rustdoc(&self) -> CargoResult<&Path> {
         self.rustdoc
-            .try_borrow_with(|| Ok(self.get_tool("rustdoc", &self.build_config()?.rustdoc)))
+            .try_borrow_with(|| Ok(self.get_tool(Tool::Rustdoc, &self.build_config()?.rustdoc)))
             .map(AsRef::as_ref)
     }
 
@@ -412,7 +406,7 @@ impl Config {
         );
 
         Rustc::new(
-            self.get_tool("rustc", &self.build_config()?.rustc),
+            self.get_tool(Tool::Rustc, &self.build_config()?.rustc),
             wrapper,
             rustc_workspace_wrapper,
             &self
@@ -439,11 +433,11 @@ impl Config {
                     // commands that use Cargo as a library to inherit (via `cargo <subcommand>`)
                     // or set (by setting `$CARGO`) a correct path to `cargo` when the current exe
                     // is not actually cargo (e.g., `cargo-*` binaries, Valgrind, `ld.so`, etc.).
-                    let exe = self
-                        .get_env_os(crate::CARGO_ENV)
-                        .map(PathBuf::from)
-                        .ok_or_else(|| anyhow!("$CARGO not set"))?
-                        .canonicalize()?;
+                    let exe = try_canonicalize(
+                        self.get_env_os(crate::CARGO_ENV)
+                            .map(PathBuf::from)
+                            .ok_or_else(|| anyhow!("$CARGO not set"))?,
+                    )?;
                     Ok(exe)
                 };
 
@@ -452,7 +446,7 @@ impl Config {
                     // The method varies per operating system and might fail; in particular,
                     // it depends on `/proc` being mounted on Linux, and some environments
                     // (like containers or chroots) may not have that available.
-                    let exe = env::current_exe()?.canonicalize()?;
+                    let exe = try_canonicalize(env::current_exe()?)?;
                     Ok(exe)
                 }
 
@@ -658,7 +652,7 @@ impl Config {
             // Root table can't have env value.
             return Ok(cv);
         }
-        let env = self.get_env_str(key.as_env_key());
+        let env = self.env.get_str(key.as_env_key());
         let env_def = Definition::Environment(key.as_env_key().to_string());
         let use_env = match (&cv, env) {
             // Lists are always merged.
@@ -729,20 +723,18 @@ impl Config {
 
     /// Helper primarily for testing.
     pub fn set_env(&mut self, env: HashMap<String, String>) {
-        self.env = env.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+        self.env = Env::from_map(env);
     }
 
-    /// Returns all environment variables as an iterator, filtering out entries
-    /// that are not valid UTF-8.
+    /// Returns all environment variables as an iterator,
+    /// keeping only entries where both the key and value are valid UTF-8.
     pub(crate) fn env(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.env
-            .iter()
-            .filter_map(|(k, v)| Some((k.to_str()?, v.to_str()?)))
+        self.env.iter_str()
     }
 
-    /// Returns all environment variable keys, filtering out entries that are not valid UTF-8.
+    /// Returns all environment variable keys, filtering out keys that are not valid UTF-8.
     fn env_keys(&self) -> impl Iterator<Item = &str> {
-        self.env.iter().filter_map(|(k, _)| k.to_str())
+        self.env.keys_str()
     }
 
     fn get_config_env<T>(&self, key: &ConfigKey) -> Result<OptValue<T>, ConfigError>
@@ -750,7 +742,7 @@ impl Config {
         T: FromStr,
         <T as FromStr>::Err: fmt::Display,
     {
-        match self.get_env_str(key.as_env_key()) {
+        match self.env.get_str(key.as_env_key()) {
             Some(value) => {
                 let definition = Definition::Environment(key.as_env_key().to_string());
                 Ok(Some(Value {
@@ -771,39 +763,21 @@ impl Config {
     ///
     /// This can be used similarly to `std::env::var`.
     pub fn get_env(&self, key: impl AsRef<OsStr>) -> CargoResult<String> {
-        let key = key.as_ref();
-        let s = match self.env.get(key) {
-            Some(s) => s,
-            None => bail!("{key:?} could not be found in the environment snapshot",),
-        };
-        match s.to_str() {
-            Some(s) => Ok(s.to_owned()),
-            None => bail!("environment variable value is not valid unicode: {s:?}"),
-        }
+        self.env.get_env(key)
     }
 
     /// Get the value of environment variable `key` through the `Config` snapshot.
     ///
     /// This can be used similarly to `std::env::var_os`.
     pub fn get_env_os(&self, key: impl AsRef<OsStr>) -> Option<OsString> {
-        self.env.get(key.as_ref()).cloned()
-    }
-
-    /// Get the value of environment variable `key`.
-    /// Returns `None` if `key` is not in `self.env` or if the value is not valid UTF-8.
-    fn get_env_str(&self, key: impl AsRef<OsStr>) -> Option<&str> {
-        self.env.get(key.as_ref()).and_then(|s| s.to_str())
-    }
-
-    fn env_has_key(&self, key: impl AsRef<OsStr>) -> bool {
-        self.env.contains_key(key.as_ref())
+        self.env.get_env_os(key)
     }
 
     /// Check if the [`Config`] contains a given [`ConfigKey`].
     ///
     /// See `ConfigMapAccess` for a description of `env_prefix_ok`.
     fn has_key(&self, key: &ConfigKey, env_prefix_ok: bool) -> CargoResult<bool> {
-        if self.env_has_key(key.as_env_key()) {
+        if self.env.contains_key(key.as_env_key()) {
             return Ok(true);
         }
         if env_prefix_ok {
@@ -821,7 +795,7 @@ impl Config {
     }
 
     fn check_environment_key_case_mismatch(&self, key: &ConfigKey) {
-        if let Some(env_key) = self.upper_case_env.get(key.as_env_key()) {
+        if let Some(env_key) = self.env.get_normalized(key.as_env_key()) {
             let _ = self.shell().warn(format!(
                 "Environment variables are expected to use uppercase letters and underscores, \
                 the variable `{}` will be ignored and have no effect",
@@ -920,7 +894,7 @@ impl Config {
         key: &ConfigKey,
         output: &mut Vec<(String, Definition)>,
     ) -> CargoResult<()> {
-        let env_val = match self.get_env_str(key.as_env_key()) {
+        let env_val = match self.env.get_str(key.as_env_key()) {
             Some(v) => v,
             None => {
                 self.check_environment_key_case_mismatch(key);
@@ -1666,11 +1640,63 @@ impl Config {
         }
     }
 
-    /// Looks for a path for `tool` in an environment variable or config path, defaulting to `tool`
-    /// as a path.
-    fn get_tool(&self, tool: &str, from_config: &Option<ConfigRelativePath>) -> PathBuf {
-        self.maybe_get_tool(tool, from_config)
-            .unwrap_or_else(|| PathBuf::from(tool))
+    /// Returns the path for the given tool.
+    ///
+    /// This will look for the tool in the following order:
+    ///
+    /// 1. From an environment variable matching the tool name (such as `RUSTC`).
+    /// 2. From the given config value (which is usually something like `build.rustc`).
+    /// 3. Finds the tool in the PATH environment variable.
+    ///
+    /// This is intended for tools that are rustup proxies. If you need to get
+    /// a tool that is not a rustup proxy, use `maybe_get_tool` instead.
+    fn get_tool(&self, tool: Tool, from_config: &Option<ConfigRelativePath>) -> PathBuf {
+        let tool_str = tool.as_str();
+        self.maybe_get_tool(tool_str, from_config)
+            .or_else(|| {
+                // This is an optimization to circumvent the rustup proxies
+                // which can have a significant performance hit. The goal here
+                // is to determine if calling `rustc` from PATH would end up
+                // calling the proxies.
+                //
+                // This is somewhat cautious trying to determine if it is safe
+                // to circumvent rustup, because there are some situations
+                // where users may do things like modify PATH, call cargo
+                // directly, use a custom rustup toolchain link without a
+                // cargo executable, etc. However, there is still some risk
+                // this may make the wrong decision in unusual circumstances.
+                //
+                // First, we must be running under rustup in the first place.
+                let toolchain = self.get_env_os("RUSTUP_TOOLCHAIN")?;
+                // This currently does not support toolchain paths.
+                // This also enforces UTF-8.
+                if toolchain.to_str()?.contains(&['/', '\\']) {
+                    return None;
+                }
+                // If the tool on PATH is the same as `rustup` on path, then
+                // there is pretty good evidence that it will be a proxy.
+                let tool_resolved = paths::resolve_executable(Path::new(tool_str)).ok()?;
+                let rustup_resolved = paths::resolve_executable(Path::new("rustup")).ok()?;
+                let tool_meta = tool_resolved.metadata().ok()?;
+                let rustup_meta = rustup_resolved.metadata().ok()?;
+                // This works on the assumption that rustup and its proxies
+                // use hard links to a single binary. If rustup ever changes
+                // that setup, then I think the worst consequence is that this
+                // optimization will not work, and it will take the slow path.
+                if tool_meta.len() != rustup_meta.len() {
+                    return None;
+                }
+                // Try to find the tool in rustup's toolchain directory.
+                let tool_exe = Path::new(tool_str).with_extension(env::consts::EXE_EXTENSION);
+                let toolchain_exe = home::rustup_home()
+                    .ok()?
+                    .join("toolchains")
+                    .join(&toolchain)
+                    .join("bin")
+                    .join(&tool_exe);
+                toolchain_exe.exists().then_some(toolchain_exe)
+            })
+            .unwrap_or_else(|| PathBuf::from(tool_str))
     }
 
     pub fn jobserver_from_env(&self) -> Option<&jobserver::Client> {
@@ -1719,8 +1745,28 @@ impl Config {
             .env_config
             .try_borrow_with(|| self.get::<EnvConfig>("env"))?;
 
-        if env_config.get("CARGO_HOME").is_some() {
-            bail!("setting the `CARGO_HOME` environment variable is not supported in the `[env]` configuration table")
+        // Reasons for disallowing these values:
+        //
+        // - CARGO_HOME: The initial call to cargo does not honor this value
+        //   from the [env] table. Recursive calls to cargo would use the new
+        //   value, possibly behaving differently from the outer cargo.
+        //
+        // - RUSTUP_HOME and RUSTUP_TOOLCHAIN: Under normal usage with rustup,
+        //   this will have no effect because the rustup proxy sets
+        //   RUSTUP_HOME and RUSTUP_TOOLCHAIN, and that would override the
+        //   [env] table. If the outer cargo is executed directly
+        //   circumventing the rustup proxy, then this would affect calls to
+        //   rustc (assuming that is a proxy), which could potentially cause
+        //   problems with cargo and rustc being from different toolchains. We
+        //   consider this to be not a use case we would like to support,
+        //   since it will likely cause problems or lead to confusion.
+        for disallowed in &["CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"] {
+            if env_config.contains_key(*disallowed) {
+                bail!(
+                    "setting the `{disallowed}` environment variable is not supported \
+                    in the `[env]` configuration table"
+                );
+            }
         }
 
         Ok(env_config)
@@ -2670,4 +2716,18 @@ macro_rules! drop_eprint {
     ($config:expr, $($arg:tt)*) => (
         $crate::__shell_print!($config, err, false, $($arg)*)
     );
+}
+
+enum Tool {
+    Rustc,
+    Rustdoc,
+}
+
+impl Tool {
+    fn as_str(&self) -> &str {
+        match self {
+            Tool::Rustc => "rustc",
+            Tool::Rustdoc => "rustdoc",
+        }
+    }
 }

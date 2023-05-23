@@ -385,7 +385,7 @@ fn update_precise() {
         .with_stderr(
             "\
 [UPDATING] `[..]` index
-[UPDATING] serde v0.2.1 -> v0.2.0
+[DOWNGRADING] serde v0.2.1 -> v0.2.0
 ",
         )
         .run();
@@ -492,7 +492,7 @@ fn update_precise_first_run() {
         .with_stderr(
             "\
 [UPDATING] `[..]` index
-[UPDATING] serde v0.2.1 -> v0.2.0
+[DOWNGRADING] serde v0.2.1 -> v0.2.0
 ",
         )
         .run();
@@ -631,6 +631,9 @@ fn update_precise_first_run() {
   "target_directory": "[..]/foo/target",
   "version": 1,
   "workspace_members": [
+    "bar 0.0.1 (path+file://[..]/foo)"
+  ],
+  "workspace_default_members": [
     "bar 0.0.1 (path+file://[..]/foo)"
   ],
   "workspace_root": "[..]/foo",

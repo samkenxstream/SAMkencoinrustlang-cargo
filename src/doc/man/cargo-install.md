@@ -173,11 +173,13 @@ Directory to install packages into.
 {{> options-target-dir }}
 
 {{#option "`--debug`" }}
-Build with the `dev` profile instead the `release` profile.
+Build with the `dev` profile instead of the `release` profile.
 See also the `--profile` option for choosing a specific profile by name.
 {{/option}}
 
 {{> options-profile }}
+
+{{> options-ignore-rust-version }}
 
 {{> options-timings }}
 

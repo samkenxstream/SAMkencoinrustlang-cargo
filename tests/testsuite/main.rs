@@ -24,6 +24,7 @@ mod cargo_command;
 mod cargo_config;
 mod cargo_env_config;
 mod cargo_features;
+mod cargo_new;
 mod cargo_remove;
 mod cargo_targets;
 mod cfg;
@@ -59,6 +60,7 @@ mod generate_lockfile;
 mod git;
 mod git_auth;
 mod git_gc;
+mod git_shallow;
 mod glob_targets;
 mod help;
 mod https;
@@ -67,6 +69,7 @@ mod init;
 mod install;
 mod install_upgrade;
 mod jobserver;
+mod lints;
 mod list_availables;
 mod local_registry;
 mod locate_project;
@@ -119,6 +122,7 @@ mod rustdoc;
 mod rustdoc_extern_html;
 mod rustdocflags;
 mod rustflags;
+mod rustup;
 mod search;
 mod shell_quoting;
 mod source_replacement;
@@ -143,52 +147,4 @@ mod yank;
 fn aaa_trigger_cross_compile_disabled_check() {
     // This triggers the cross compile disabled check to run ASAP, see #5141
     cargo_test_support::cross_compile::disabled();
-}
-
-// This is placed here as running tests in `cargo-test-support` would rebuild it
-#[cargo_test]
-fn check_test_dir() {
-    let tests = vec![
-        (
-            "tests/testsuite/workspaces.rs",
-            "workspace_in_git",
-            "testsuite/workspaces/workspace_in_git",
-        ),
-        (
-            "tests/testsuite/cargo_remove/invalid_arg/mod.rs",
-            "case",
-            "testsuite/cargo_remove/invalid_arg/case",
-        ),
-        (
-            "tests/build-std/main.rs",
-            "cross_custom",
-            "build-std/main/cross_custom",
-        ),
-        (
-            "src/tools/cargo/tests/testsuite/build.rs",
-            "cargo_compile_simple",
-            "src/tools/cargo/testsuite/build/cargo_compile_simple",
-        ),
-        (
-            "src/tools/cargo/tests/testsuite/cargo_add/add_basic/mod.rs",
-            "case",
-            "src/tools/cargo/testsuite/cargo_add/add_basic/case",
-        ),
-        (
-            "src/tools/cargo/tests/build-std/main.rs",
-            "cross_custom",
-            "src/tools/cargo/build-std/main/cross_custom",
-        ),
-        (
-            "workspace/more/src/tools/cargo/tests/testsuite/build.rs",
-            "cargo_compile_simple",
-            "src/tools/cargo/testsuite/build/cargo_compile_simple",
-        ),
-    ];
-    for (path, name, expected) in tests {
-        assert_eq!(
-            cargo_test_support::paths::test_dir(path, name),
-            std::path::PathBuf::from(expected)
-        );
-    }
 }

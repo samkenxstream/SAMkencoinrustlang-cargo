@@ -66,7 +66,6 @@
 //! details like invalidating caches and whatnot which are handled below, but
 //! hopefully those are more obvious inline in the code itself.
 
-use crate::core::dependency::Dependency;
 use crate::core::{PackageId, SourceId, Summary};
 use crate::sources::registry::{LoadResponse, RegistryData, RegistryPackage, INDEX_V_MAX};
 use crate::util::interning::InternedString;
@@ -81,91 +80,6 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::str;
 use std::task::{ready, Poll};
-
-/// Crates.io treats hyphen and underscores as interchangeable, but the index and old Cargo do not.
-/// Therefore, the index must store uncanonicalized version of the name so old Cargo's can find it.
-/// This loop tries all possible combinations of switching hyphen and underscores to find the
-/// uncanonicalized one. As all stored inputs have the correct spelling, we start with the spelling
-/// as-provided.
-struct UncanonicalizedIter<'s> {
-    input: &'s str,
-    num_hyphen_underscore: u32,
-    hyphen_combination_num: u16,
-}
-
-impl<'s> UncanonicalizedIter<'s> {
-    fn new(input: &'s str) -> Self {
-        let num_hyphen_underscore = input.chars().filter(|&c| c == '_' || c == '-').count() as u32;
-        UncanonicalizedIter {
-            input,
-            num_hyphen_underscore,
-            hyphen_combination_num: 0,
-        }
-    }
-}
-
-impl<'s> Iterator for UncanonicalizedIter<'s> {
-    type Item = String;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.hyphen_combination_num > 0
-            && self.hyphen_combination_num.trailing_zeros() >= self.num_hyphen_underscore
-        {
-            return None;
-        }
-
-        let ret = Some(
-            self.input
-                .chars()
-                .scan(0u16, |s, c| {
-                    // the check against 15 here's to prevent
-                    // shift overflow on inputs with more than 15 hyphens
-                    if (c == '_' || c == '-') && *s <= 15 {
-                        let switch = (self.hyphen_combination_num & (1u16 << *s)) > 0;
-                        let out = if (c == '_') ^ switch { '_' } else { '-' };
-                        *s += 1;
-                        Some(out)
-                    } else {
-                        Some(c)
-                    }
-                })
-                .collect(),
-        );
-        self.hyphen_combination_num += 1;
-        ret
-    }
-}
-
-#[test]
-fn no_hyphen() {
-    assert_eq!(
-        UncanonicalizedIter::new("test").collect::<Vec<_>>(),
-        vec!["test".to_string()]
-    )
-}
-
-#[test]
-fn two_hyphen() {
-    assert_eq!(
-        UncanonicalizedIter::new("te-_st").collect::<Vec<_>>(),
-        vec![
-            "te-_st".to_string(),
-            "te__st".to_string(),
-            "te--st".to_string(),
-            "te_-st".to_string()
-        ]
-    )
-}
-
-#[test]
-fn overflow_hyphen() {
-    assert_eq!(
-        UncanonicalizedIter::new("te-_-_-_-_-_-_-_-_-st")
-            .take(100)
-            .count(),
-        100
-    )
-}
 
 /// Manager for handling the on-disk index.
 ///
@@ -267,7 +181,7 @@ impl<'cfg> RegistryIndex<'cfg> {
     /// Returns the hash listed for a specified `PackageId`.
     pub fn hash(&mut self, pkg: PackageId, load: &mut dyn RegistryData) -> Poll<CargoResult<&str>> {
         let req = OptVersionReq::exact(pkg.version());
-        let summary = self.summaries(pkg.name(), &req, load)?;
+        let summary = self.summaries(&pkg.name(), &req, load)?;
         let summary = ready!(summary).next();
         Poll::Ready(Ok(summary
             .ok_or_else(|| internal(format!("no hash listed for {}", pkg)))?
@@ -285,7 +199,7 @@ impl<'cfg> RegistryIndex<'cfg> {
     /// though since this method is called quite a lot on null builds in Cargo.
     pub fn summaries<'a, 'b>(
         &'a mut self,
-        name: InternedString,
+        name: &str,
         req: &'b OptVersionReq,
         load: &mut dyn RegistryData,
     ) -> Poll<CargoResult<impl Iterator<Item = &'a IndexSummary> + 'b>>
@@ -299,6 +213,7 @@ impl<'cfg> RegistryIndex<'cfg> {
         // has run previously this will parse a Cargo-specific cache file rather
         // than the registry itself. In effect this is intended to be a quite
         // cheap operation.
+        let name = InternedString::new(name);
         let summaries = ready!(self.load_summaries(name, load)?);
 
         // Iterate over our summaries, extract all relevant ones which match our
@@ -360,46 +275,18 @@ impl<'cfg> RegistryIndex<'cfg> {
             .chars()
             .flat_map(|c| c.to_lowercase())
             .collect::<String>();
-        let raw_path = make_dep_path(&fs_name, false);
 
-        let mut any_pending = false;
-        // Attempt to handle misspellings by searching for a chain of related
-        // names to the original `raw_path` name. Only return summaries
-        // associated with the first hit, however. The resolver will later
-        // reject any candidates that have the wrong name, and with this it'll
-        // along the way produce helpful "did you mean?" suggestions.
-        for (i, path) in UncanonicalizedIter::new(&raw_path).take(1024).enumerate() {
-            let summaries = Summaries::parse(
-                root,
-                &cache_root,
-                path.as_ref(),
-                self.source_id,
-                load,
-                self.config,
-            )?;
-            if summaries.is_pending() {
-                if i == 0 {
-                    // If we have not herd back about the name as requested
-                    // then don't ask about other spellings yet.
-                    // This prevents us spamming all the variations in the
-                    // case where we have the correct spelling.
-                    return Poll::Pending;
-                }
-                any_pending = true;
-            }
-            if let Poll::Ready(Some(summaries)) = summaries {
-                self.summaries_cache.insert(name, summaries);
-                return Poll::Ready(Ok(self.summaries_cache.get_mut(&name).unwrap()));
-            }
-        }
-
-        if any_pending {
-            return Poll::Pending;
-        }
-
-        // If nothing was found then this crate doesn't exists, so just use an
-        // empty `Summaries` list.
-        self.summaries_cache.insert(name, Summaries::default());
+        let path = make_dep_path(&fs_name, false);
+        let summaries = ready!(Summaries::parse(
+            root,
+            &cache_root,
+            path.as_ref(),
+            self.source_id,
+            load,
+            self.config,
+        ))?
+        .unwrap_or_default();
+        self.summaries_cache.insert(name, summaries);
         Poll::Ready(Ok(self.summaries_cache.get_mut(&name).unwrap()))
     }
 
@@ -410,7 +297,8 @@ impl<'cfg> RegistryIndex<'cfg> {
 
     pub fn query_inner(
         &mut self,
-        dep: &Dependency,
+        name: &str,
+        req: &OptVersionReq,
         load: &mut dyn RegistryData,
         yanked_whitelist: &HashSet<PackageId>,
         f: &mut dyn FnMut(Summary),
@@ -426,17 +314,20 @@ impl<'cfg> RegistryIndex<'cfg> {
             // then cargo will fail to download and an error message
             // indicating that the required dependency is unavailable while
             // offline will be displayed.
-            if ready!(self.query_inner_with_online(dep, load, yanked_whitelist, f, false)?) > 0 {
+            if ready!(self.query_inner_with_online(name, req, load, yanked_whitelist, f, false)?)
+                > 0
+            {
                 return Poll::Ready(Ok(()));
             }
         }
-        self.query_inner_with_online(dep, load, yanked_whitelist, f, true)
+        self.query_inner_with_online(name, req, load, yanked_whitelist, f, true)
             .map_ok(|_| ())
     }
 
     fn query_inner_with_online(
         &mut self,
-        dep: &Dependency,
+        name: &str,
+        req: &OptVersionReq,
         load: &mut dyn RegistryData,
         yanked_whitelist: &HashSet<PackageId>,
         f: &mut dyn FnMut(Summary),
@@ -444,7 +335,7 @@ impl<'cfg> RegistryIndex<'cfg> {
     ) -> Poll<CargoResult<usize>> {
         let source_id = self.source_id;
 
-        let summaries = ready!(self.summaries(dep.package_name(), dep.version_req(), load))?;
+        let summaries = ready!(self.summaries(name, req, load))?;
 
         let summaries = summaries
             // First filter summaries for `--offline`. If we're online then
@@ -469,7 +360,6 @@ impl<'cfg> RegistryIndex<'cfg> {
         // `<pkg>=<p_req>o-><f_req>` where `<pkg>` is the name of a crate on
         // this source, `<p_req>` is the version installed and `<f_req> is the
         // version requested (argument to `--precise`).
-        let name = dep.package_name().as_str();
         let precise = match source_id.precise() {
             Some(p) if p.starts_with(name) && p[name.len()..].starts_with('=') => {
                 let mut vers = p[name.len() + 1..].splitn(2, "->");
@@ -481,7 +371,7 @@ impl<'cfg> RegistryIndex<'cfg> {
         };
         let summaries = summaries.filter(|s| match &precise {
             Some((current, requested)) => {
-                if dep.version_req().matches(current) {
+                if req.matches(current) {
                     // Unfortunately crates.io allows versions to differ only
                     // by build metadata. This shouldn't be allowed, but since
                     // it is, this will honor it if requested. However, if not
@@ -521,7 +411,7 @@ impl<'cfg> RegistryIndex<'cfg> {
     ) -> Poll<CargoResult<bool>> {
         let req = OptVersionReq::exact(pkg.version());
         let found = self
-            .summaries(pkg.name(), &req, load)
+            .summaries(&pkg.name(), &req, load)
             .map_ok(|mut p| p.any(|summary| summary.yanked));
         found
     }
@@ -839,6 +729,7 @@ impl IndexSummary {
             features2,
             yanked,
             links,
+            rust_version,
             v,
         } = serde_json::from_slice(line)?;
         let v = v.unwrap_or(1);
@@ -853,7 +744,7 @@ impl IndexSummary {
                 features.entry(name).or_default().extend(values);
             }
         }
-        let mut summary = Summary::new(config, pkgid, deps, &features, links)?;
+        let mut summary = Summary::new(config, pkgid, deps, &features, links, rust_version)?;
         summary.set_checksum(cksum);
         Ok(IndexSummary {
             summary,

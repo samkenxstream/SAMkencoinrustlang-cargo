@@ -4,6 +4,7 @@ mod add_normalized_name_external;
 mod build;
 mod build_prefer_existing_version;
 mod change_rename_target;
+mod cyclic_features;
 mod default_features;
 mod deprecated_default_features;
 mod deprecated_section;
@@ -14,6 +15,7 @@ mod dev;
 mod dev_build_conflict;
 mod dev_prefer_existing_version;
 mod dry_run;
+mod empty_dep_table;
 mod features;
 mod features_empty;
 mod features_multiple_occurrences;
@@ -164,6 +166,12 @@ fn add_registry_packages(alt: bool) {
         .publish();
     cargo_test_support::registry::Package::new("test_nonbreaking", "0.1.1")
         .alternative(alt)
+        .publish();
+    cargo_test_support::registry::Package::new("test_cyclic_features", "0.1.1")
+        .alternative(alt)
+        .feature("default", &["feature-one", "feature-two"])
+        .feature("feature-one", &["feature-two"])
+        .feature("feature-two", &["feature-one"])
         .publish();
 
     // Normalization

@@ -53,6 +53,12 @@ and may change in the future; beware of depending on it.
 .sp
 See the \fIrustdoc book\fR <https://doc.rust\-lang.org/rustdoc/> for more information
 on writing doc tests.
+.SS "Working directory of tests"
+The working directory of every test is set to the root directory of the package 
+the test belongs to.
+Setting the working directory of tests to the package\[cq]s root directory makes it 
+possible for tests to reliably access the package\[cq]s files using relative paths,
+regardless from where \fBcargo test\fR was executed from.
 .SH "OPTIONS"
 .SS "Test Options"
 .sp
@@ -143,12 +149,19 @@ available)
 .sp
 The default behavior can be changed by setting the \fBtest\fR flag for the target
 in the manifest settings. Setting examples to \fBtest = true\fR will build and run
-the example as a test. Setting targets to \fBtest = false\fR will stop them from
-being tested by default. Target selection options that take a target by name
+the example as a test, replacing the example\[cq]s \fBmain\fR function with the
+libtest harness. If you don\[cq]t want the \fBmain\fR function replaced, also include
+\fBharness = false\fR, in which case the example will be built and executed as\-is.
+.sp
+Setting targets to \fBtest = false\fR will stop them from being tested by default.
+Target selection options that take a target by name (such as \fB\-\-example foo\fR)
 ignore the \fBtest\fR flag and will always test the given target.
 .sp
 Doc tests for libraries may be disabled by setting \fBdoctest = false\fR for the
 library in the manifest.
+.sp
+See \fIConfiguring a target\fR <https://doc.rust\-lang.org/cargo/reference/cargo\-targets.html#configuring\-a\-target>
+for more information on per\-target settings.
 .sp
 Binary targets are automatically built if there is an integration test or
 benchmark being selected to test. This allows an integration
@@ -474,7 +487,13 @@ See the \fIcommand\-line overrides section\fR <https://doc.rust\-lang.org/cargo/
 .RS 4
 Changes the current working directory before executing any specified operations. This affects
 things like where cargo looks by default for the project manifest (\fBCargo.toml\fR), as well as
-the directories searched for discovering \fB\&.cargo/config.toml\fR, for example.
+the directories searched for discovering \fB\&.cargo/config.toml\fR, for example. This option must
+appear before the command name, for example \fBcargo \-C path/to/my\-project build\fR\&.
+.sp
+This option is only available on the \fInightly
+channel\fR <https://doc.rust\-lang.org/book/appendix\-07\-nightly\-rust.html> and
+requires the \fB\-Z unstable\-options\fR flag to enable (see
+\fI#10098\fR <https://github.com/rust\-lang/cargo/issues/10098>).
 .RE
 .sp
 \fB\-h\fR, 

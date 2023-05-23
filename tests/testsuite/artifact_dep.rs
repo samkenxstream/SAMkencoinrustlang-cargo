@@ -1911,7 +1911,10 @@ fn publish_artifact_dep() {
 [PACKAGING] foo v0.1.0 [..]
 [PACKAGED] [..]
 [UPLOADING] foo v0.1.0 [..]
-[UPDATING] [..]
+[UPLOADED] foo v0.1.0 [..]
+note: Waiting [..]
+You may press ctrl-c [..]
+[PUBLISHED] foo v0.1.0 [..]
 ",
         )
         .run();
@@ -1953,6 +1956,7 @@ fn publish_artifact_dep() {
           "readme": null,
           "readme_file": null,
           "repository": "foo",
+          "rust_version": null,
           "vers": "0.1.0"
         }
         "#,

@@ -1,5 +1,6 @@
 use crate::core::{GitReference, PackageId, SourceId};
 use crate::sources::git;
+use crate::sources::git::fetch::RemoteKind;
 use crate::sources::registry::download;
 use crate::sources::registry::MaybeLock;
 use crate::sources::registry::{LoadResponse, RegistryConfig, RegistryData};
@@ -32,6 +33,7 @@ pub struct RemoteRegistry<'cfg> {
     head: Cell<Option<git2::Oid>>,
     current_sha: Cell<Option<InternedString>>,
     needs_update: bool, // Does this registry need to be updated?
+    quiet: bool,
 }
 
 impl<'cfg> RemoteRegistry<'cfg> {
@@ -48,6 +50,7 @@ impl<'cfg> RemoteRegistry<'cfg> {
             head: Cell::new(None),
             current_sha: Cell::new(None),
             needs_update: false,
+            quiet: false,
         }
     }
 
@@ -292,16 +295,24 @@ impl<'cfg> RegistryData for RemoteRegistry<'cfg> {
         *self.tree.borrow_mut() = None;
         self.current_sha.set(None);
         let path = self.config.assert_package_cache_locked(&self.index_path);
-        self.config
-            .shell()
-            .status("Updating", self.source_id.display_index())?;
+        if !self.quiet {
+            self.config
+                .shell()
+                .status("Updating", self.source_id.display_index())?;
+        }
 
         // Fetch the latest version of our `index_git_ref` into the index
         // checkout.
         let url = self.source_id.url();
         let repo = self.repo.borrow_mut().unwrap();
-        git::fetch(repo, url.as_str(), &self.index_git_ref, self.config)
-            .with_context(|| format!("failed to fetch `{}`", url))?;
+        git::fetch(
+            repo,
+            url.as_str(),
+            &self.index_git_ref,
+            self.config,
+            RemoteKind::Registry,
+        )
+        .with_context(|| format!("failed to fetch `{}`", url))?;
 
         // Create a dummy file to record the mtime for when we updated the
         // index.
@@ -313,6 +324,10 @@ impl<'cfg> RegistryData for RemoteRegistry<'cfg> {
     fn invalidate_cache(&mut self) {
         // To fully invalidate, undo `mark_updated`s work
         self.needs_update = true;
+    }
+
+    fn set_quiet(&mut self, quiet: bool) {
+        self.quiet = quiet;
     }
 
     fn is_updated(&self) -> bool {

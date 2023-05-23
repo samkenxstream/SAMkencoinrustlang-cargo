@@ -209,6 +209,12 @@ The output has the following format:
     "workspace_members": [
         "my\-package 0.1.0 (path+file:///path/to/my\-package)",
     ],
+    /* Array of default members of the workspace.
+       Each entry is the Package ID for the package.
+    */
+    "workspace_default_members": [
+        "my\-package 0.1.0 (path+file:///path/to/my\-package)",
+    ],
     // The resolved dependency graph for the entire workspace. The enabled
     // features are based on the enabled features for the "current" package.
     // Inactivated optional dependencies are not listed.
@@ -437,7 +443,13 @@ See the \fIcommand\-line overrides section\fR <https://doc.rust\-lang.org/cargo/
 .RS 4
 Changes the current working directory before executing any specified operations. This affects
 things like where cargo looks by default for the project manifest (\fBCargo.toml\fR), as well as
-the directories searched for discovering \fB\&.cargo/config.toml\fR, for example.
+the directories searched for discovering \fB\&.cargo/config.toml\fR, for example. This option must
+appear before the command name, for example \fBcargo \-C path/to/my\-project build\fR\&.
+.sp
+This option is only available on the \fInightly
+channel\fR <https://doc.rust\-lang.org/book/appendix\-07\-nightly\-rust.html> and
+requires the \fB\-Z unstable\-options\fR flag to enable (see
+\fI#10098\fR <https://github.com/rust\-lang/cargo/issues/10098>).
 .RE
 .sp
 \fB\-h\fR, 

@@ -164,7 +164,7 @@ use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::task::Poll;
+use std::task::{ready, Poll};
 
 use anyhow::Context as _;
 use cargo_util::paths::{self, exclude_from_backups_and_indexing};
@@ -241,7 +241,7 @@ pub struct RegistryConfig {
     /// crate's sha256 checksum.
     ///
     /// For backwards compatibility, if the string does not contain any
-    /// markers (`{crate}`, `{version}`, `{prefix}`, or ``{lowerprefix}`), it
+    /// markers (`{crate}`, `{version}`, `{prefix}`, or `{lowerprefix}`), it
     /// will be extended with `/{crate}/{version}/download` to
     /// support registries like crates.io which were created before the
     /// templating setup was created.
@@ -287,6 +287,13 @@ pub struct RegistryPackage<'a> {
     /// Added early 2018 (see <https://github.com/rust-lang/cargo/pull/4978>),
     /// can be `None` if published before then.
     links: Option<InternedString>,
+    /// Required version of rust
+    ///
+    /// Corresponds to `package.rust-version`.
+    ///
+    /// Added in 2023 (see <https://github.com/rust-lang/crates.io/pull/6267>),
+    /// can be `None` if published before then or if not set in the manifest.
+    rust_version: Option<InternedString>,
     /// The schema version for this entry.
     ///
     /// If this is None, it defaults to version 1. Entries with unknown
@@ -474,6 +481,9 @@ pub trait RegistryData {
     /// Invalidates locally cached data.
     fn invalidate_cache(&mut self);
 
+    /// If quiet, the source should not display any progress or status messages.
+    fn set_quiet(&mut self, quiet: bool);
+
     /// Is the local cached data up-to-date?
     fn is_updated(&self) -> bool;
 
@@ -546,10 +556,14 @@ mod index;
 mod local;
 mod remote;
 
-fn short_name(id: SourceId) -> String {
+fn short_name(id: SourceId, is_shallow: bool) -> String {
     let hash = hex::short_hash(&id);
     let ident = id.url().host_str().unwrap_or("").to_string();
-    format!("{}-{}", ident, hash)
+    let mut name = format!("{}-{}", ident, hash);
+    if is_shallow {
+        name.push_str("-shallow");
+    }
+    name
 }
 
 impl<'cfg> RegistrySource<'cfg> {
@@ -559,7 +573,14 @@ impl<'cfg> RegistrySource<'cfg> {
         config: &'cfg Config,
     ) -> CargoResult<RegistrySource<'cfg>> {
         assert!(source_id.is_remote_registry());
-        let name = short_name(source_id);
+        let name = short_name(
+            source_id,
+            config
+                .cli_unstable()
+                .gitoxide
+                .map_or(false, |gix| gix.fetch && gix.shallow_index)
+                && !source_id.is_sparse(),
+        );
         let ops = if source_id.is_sparse() {
             Box::new(http_remote::HttpRegistry::new(source_id, config, &name)?) as Box<_>
         } else {
@@ -581,7 +602,7 @@ impl<'cfg> RegistrySource<'cfg> {
         yanked_whitelist: &HashSet<PackageId>,
         config: &'cfg Config,
     ) -> RegistrySource<'cfg> {
-        let name = short_name(source_id);
+        let name = short_name(source_id, false);
         let ops = local::LocalRegistry::new(path, config, &name);
         RegistrySource::new(source_id, config, &name, Box::new(ops), yanked_whitelist)
     }
@@ -753,7 +774,7 @@ impl<'cfg> RegistrySource<'cfg> {
         let req = OptVersionReq::exact(package.version());
         let summary_with_cksum = self
             .index
-            .summaries(package.name(), &req, &mut *self.ops)?
+            .summaries(&package.name(), &req, &mut *self.ops)?
             .expect("a downloaded dep now pending!?")
             .map(|s| s.summary.clone())
             .next()
@@ -783,36 +804,79 @@ impl<'cfg> Source for RegistrySource<'cfg> {
         {
             debug!("attempting query without update");
             let mut called = false;
-            let pend =
-                self.index
-                    .query_inner(dep, &mut *self.ops, &self.yanked_whitelist, &mut |s| {
-                        if dep.matches(&s) {
-                            called = true;
-                            f(s);
-                        }
-                    })?;
-            if pend.is_pending() {
-                return Poll::Pending;
-            }
+            ready!(self.index.query_inner(
+                &dep.package_name(),
+                dep.version_req(),
+                &mut *self.ops,
+                &self.yanked_whitelist,
+                &mut |s| {
+                    if dep.matches(&s) {
+                        called = true;
+                        f(s);
+                    }
+                },
+            ))?;
             if called {
-                return Poll::Ready(Ok(()));
+                Poll::Ready(Ok(()))
             } else {
                 debug!("falling back to an update");
                 self.invalidate_cache();
-                return Poll::Pending;
+                Poll::Pending
+            }
+        } else {
+            let mut called = false;
+            ready!(self.index.query_inner(
+                &dep.package_name(),
+                dep.version_req(),
+                &mut *self.ops,
+                &self.yanked_whitelist,
+                &mut |s| {
+                    let matched = match kind {
+                        QueryKind::Exact => dep.matches(&s),
+                        QueryKind::Fuzzy => true,
+                    };
+                    if matched {
+                        f(s);
+                        called = true;
+                    }
+                }
+            ))?;
+            if called {
+                return Poll::Ready(Ok(()));
+            }
+            let mut any_pending = false;
+            if kind == QueryKind::Fuzzy {
+                // Attempt to handle misspellings by searching for a chain of related
+                // names to the original name. The resolver will later
+                // reject any candidates that have the wrong name, and with this it'll
+                // along the way produce helpful "did you mean?" suggestions.
+                // For now we only try the canonical lysing `-` to `_` and vice versa.
+                // More advanced fuzzy searching become in the future.
+                for name_permutation in [
+                    dep.package_name().replace('-', "_"),
+                    dep.package_name().replace('_', "-"),
+                ] {
+                    if name_permutation.as_str() == dep.package_name().as_str() {
+                        continue;
+                    }
+                    any_pending |= self
+                        .index
+                        .query_inner(
+                            &name_permutation,
+                            dep.version_req(),
+                            &mut *self.ops,
+                            &self.yanked_whitelist,
+                            f,
+                        )?
+                        .is_pending();
+                }
+            }
+            if any_pending {
+                Poll::Pending
+            } else {
+                Poll::Ready(Ok(()))
             }
         }
-
-        self.index
-            .query_inner(dep, &mut *self.ops, &self.yanked_whitelist, &mut |s| {
-                let matched = match kind {
-                    QueryKind::Exact => dep.matches(&s),
-                    QueryKind::Fuzzy => true,
-                };
-                if matched {
-                    f(s);
-                }
-            })
     }
 
     fn supports_checksums(&self) -> bool {
@@ -830,6 +894,10 @@ impl<'cfg> Source for RegistrySource<'cfg> {
     fn invalidate_cache(&mut self) {
         self.index.clear_summaries_cache();
         self.ops.invalidate_cache();
+    }
+
+    fn set_quiet(&mut self, quiet: bool) {
+        self.ops.set_quiet(quiet);
     }
 
     fn download(&mut self, package: PackageId) -> CargoResult<MaybePackage> {
@@ -901,7 +969,7 @@ impl<'cfg> Source for RegistrySource<'cfg> {
 }
 
 /// Get the maximum upack size that Cargo permits
-/// based on a given `size of your compressed file.
+/// based on a given `size` of your compressed file.
 ///
 /// Returns the larger one between `size * max compression ratio`
 /// and a fixed max unpacked size.

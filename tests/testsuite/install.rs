@@ -560,7 +560,7 @@ Available binaries:
 }
 
 #[cargo_test]
-fn multiple_crates_error() {
+fn multiple_packages_containing_binaries() {
     let p = git::repo(&paths::root().join("foo"))
         .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
         .file("src/main.rs", "fn main() {}")
@@ -568,18 +568,99 @@ fn multiple_crates_error() {
         .file("a/src/main.rs", "fn main() {}")
         .build();
 
+    let git_url = p.url().to_string();
     cargo_process("install --git")
         .arg(p.url().to_string())
         .with_status(101)
-        .with_stderr(
+        .with_stderr(format!(
             "\
 [UPDATING] git repository [..]
 [ERROR] multiple packages with binaries found: bar, foo. \
-When installing a git repository, cargo will always search the entire repo for any Cargo.toml. \
-Please specify which to install.
-",
-        )
+When installing a git repository, cargo will always search the entire repo for any Cargo.toml.
+Please specify a package, e.g. `cargo install --git {git_url} bar`.
+"
+        ))
         .run();
+}
+
+#[cargo_test]
+fn multiple_packages_matching_example() {
+    let p = git::repo(&paths::root().join("foo"))
+        .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
+        .file("src/lib.rs", "")
+        .file("examples/ex1.rs", "fn main() {}")
+        .file("bar/Cargo.toml", &basic_manifest("bar", "0.1.0"))
+        .file("bar/src/lib.rs", "")
+        .file("bar/examples/ex1.rs", "fn main() {}")
+        .build();
+
+    let git_url = p.url().to_string();
+    cargo_process("install --example ex1 --git")
+        .arg(p.url().to_string())
+        .with_status(101)
+        .with_stderr(format!(
+            "\
+[UPDATING] git repository [..]
+[ERROR] multiple packages with examples found: bar, foo. \
+When installing a git repository, cargo will always search the entire repo for any Cargo.toml.
+Please specify a package, e.g. `cargo install --git {git_url} bar`."
+        ))
+        .run();
+}
+
+#[cargo_test]
+fn multiple_binaries_deep_select_uses_package_name() {
+    let p = git::repo(&paths::root().join("foo"))
+        .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
+        .file("src/main.rs", "fn main() {}")
+        .file("bar/baz/Cargo.toml", &basic_manifest("baz", "0.1.0"))
+        .file("bar/baz/src/main.rs", "fn main() {}")
+        .build();
+
+    cargo_process("install --git")
+        .arg(p.url().to_string())
+        .arg("baz")
+        .run();
+}
+
+#[cargo_test]
+fn multiple_binaries_in_selected_package_installs_all() {
+    let p = git::repo(&paths::root().join("foo"))
+        .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
+        .file("src/lib.rs", "")
+        .file("bar/Cargo.toml", &basic_manifest("bar", "0.1.0"))
+        .file("bar/src/bin/bin1.rs", "fn main() {}")
+        .file("bar/src/bin/bin2.rs", "fn main() {}")
+        .build();
+
+    cargo_process("install --git")
+        .arg(p.url().to_string())
+        .arg("bar")
+        .run();
+
+    let cargo_home = cargo_home();
+    assert_has_installed_exe(&cargo_home, "bin1");
+    assert_has_installed_exe(&cargo_home, "bin2");
+}
+
+#[cargo_test]
+fn multiple_binaries_in_selected_package_with_bin_option_installs_only_one() {
+    let p = git::repo(&paths::root().join("foo"))
+        .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
+        .file("src/lib.rs", "")
+        .file("bar/Cargo.toml", &basic_manifest("bar", "0.1.0"))
+        .file("bar/src/bin/bin1.rs", "fn main() {}")
+        .file("bar/src/bin/bin2.rs", "fn main() {}")
+        .build();
+
+    cargo_process("install --bin bin1 --git")
+        .arg(p.url().to_string())
+        .arg("bar")
+        .run();
+
+    let cargo_home = cargo_home();
+    assert_has_installed_exe(&cargo_home, "bin1");
+    assert_has_not_installed_exe(&cargo_home, "bin2");
 }
 
 #[cargo_test]
@@ -881,7 +962,7 @@ fn compile_failure() {
         .with_status(101)
         .with_stderr_contains(
             "\
-[ERROR] could not compile `foo` due to previous error
+[ERROR] could not compile `foo` (bin \"foo\") due to previous error
 [ERROR] failed to compile `foo v0.0.1 ([..])`, intermediate artifacts can be \
     found at `[..]target`
 ",
@@ -1325,6 +1406,46 @@ fn path_install_workspace_root_despite_default_members() {
 
     p.cargo("install --path")
         .arg(p.root())
+        .arg("ws-root")
+        .with_stderr_contains(
+            "[INSTALLED] package `ws-root v0.1.0 ([..])` (executable `ws-root[EXE]`)",
+        )
+        // Particularly avoid "Installed package `ws-root v0.1.0 ([..]])` (executable `ws-member`)":
+        .with_stderr_does_not_contain("ws-member")
+        .run();
+}
+
+#[cargo_test]
+fn git_install_workspace_root_despite_default_members() {
+    let p = git::repo(&paths::root().join("foo"))
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "ws-root"
+                version = "0.1.0"
+                authors = []
+
+                [workspace]
+                members = ["ws-member"]
+                default-members = ["ws-member"]
+            "#,
+        )
+        .file("src/main.rs", "fn main() {}")
+        .file(
+            "ws-member/Cargo.toml",
+            r#"
+                [package]
+                name = "ws-member"
+                version = "0.1.0"
+                authors = []
+            "#,
+        )
+        .file("ws-member/src/main.rs", "fn main() {}")
+        .build();
+
+    cargo_process("install --git")
+        .arg(p.url().to_string())
         .arg("ws-root")
         .with_stderr_contains(
             "[INSTALLED] package `ws-root v0.1.0 ([..])` (executable `ws-root[EXE]`)",
@@ -2205,4 +2326,85 @@ fn sparse_install() {
         r#"[v1]
 "#,
     );
+}
+
+#[cargo_test]
+fn self_referential() {
+    // Some packages build-dep on prior versions of themselves.
+    Package::new("foo", "0.0.1")
+        .file("src/lib.rs", "fn hello() {}")
+        .file("src/main.rs", "fn main() {}")
+        .file("build.rs", "fn main() {}")
+        .publish();
+    Package::new("foo", "0.0.2")
+        .file("src/lib.rs", "fn hello() {}")
+        .file("src/main.rs", "fn main() {}")
+        .file("build.rs", "fn main() {}")
+        .build_dep("foo", "0.0.1")
+        .publish();
+
+    cargo_process("install foo")
+        .with_stderr(
+            "\
+[UPDATING] `[..]` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] foo v0.0.2 (registry [..])
+[INSTALLING] foo v0.0.2
+[DOWNLOADING] crates ...
+[DOWNLOADED] foo v0.0.1 (registry [..])
+[COMPILING] foo v0.0.1
+[COMPILING] foo v0.0.2
+[FINISHED] release [optimized] target(s) in [..]
+[INSTALLING] [CWD]/home/.cargo/bin/foo[EXE]
+[INSTALLED] package `foo v0.0.2` (executable `foo[EXE]`)
+[WARNING] be sure to add `[..]` to your PATH to be able to run the installed binaries
+",
+        )
+        .run();
+    assert_has_installed_exe(cargo_home(), "foo");
+}
+
+#[cargo_test]
+fn ambiguous_registry_vs_local_package() {
+    // Correctly install 'foo' from a local package, even if that package also
+    // depends on a registry dependency named 'foo'.
+    Package::new("foo", "0.0.1")
+        .file("src/lib.rs", "fn hello() {}")
+        .publish();
+
+    let p = project()
+        .file("src/main.rs", "fn main() {}")
+        .file(
+            "Cargo.toml",
+            r#"
+        [package]
+        name = "foo"
+        version = "0.1.0"
+        authors = []
+        edition = "2021"
+
+        [dependencies]
+        foo = "0.0.1"
+    "#,
+        )
+        .build();
+
+    cargo_process("install --path")
+        .arg(p.root())
+        .with_stderr(
+            "\
+[INSTALLING] foo v0.1.0 ([..])
+[UPDATING] `[..]` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] foo v0.0.1 (registry [..])
+[COMPILING] foo v0.0.1
+[COMPILING] foo v0.1.0 ([..])
+[FINISHED] release [optimized] target(s) in [..]
+[INSTALLING] [CWD]/home/.cargo/bin/foo[EXE]
+[INSTALLED] package `foo v0.1.0 ([..])` (executable `foo[EXE]`)
+[WARNING] be sure to add `[..]` to your PATH to be able to run the installed binaries
+",
+        )
+        .run();
+    assert_has_installed_exe(cargo_home(), "foo");
 }

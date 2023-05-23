@@ -9,7 +9,6 @@ allow-unauthenticated = [
     "S-*",
     "Z-*",
     "beta-nominated",
-    "needs-mcve",
     "regression-*",
     "relnotes",
 ]
@@ -40,8 +39,7 @@ warn_non_default_branch = true
 [autolabel."A-build-execution"]
 trigger_files = [
   "src/cargo/core/compiler/compilation.rs",
-  "src/cargo/core/compiler/job.rs",
-  "src/cargo/core/compiler/job_queue.rs",
+  "src/cargo/core/compiler/job_queue/",
   "src/cargo/core/compiler/mod.rs",
 ]
 
@@ -105,7 +103,10 @@ trigger_files = ["src/cargo/sources/directory.rs"]
 trigger_files = ["src/doc/"]
 
 [autolabel."A-environment-variables"]
-trigger_files = ["crates/home/"]
+trigger_files = [
+  "crates/home/",
+  "src/cargo/util/config/environment.rs",
+]
 
 [autolabel."A-errors"]
 trigger_files = ["src/cargo/util/diagnostic_server.rs"]
@@ -121,6 +122,19 @@ trigger_files = ["src/cargo/core/compiler/future_incompat.rs"]
 
 [autolabel."A-git"]
 trigger_files = ["src/cargo/sources/git/"]
+
+[autolabel."A-infrastructure"]
+trigger_files = [
+  ".cargo/",
+  ".github/",
+  "build.rs",
+  "ci/",
+  "clippy.toml",
+  "crates/xtask-",
+  "deny.toml",
+  "publish.py",
+  "triagebot.toml",
+]
 
 [autolabel."A-interacts-with-crates.io"]
 trigger_files = ["crates/crates-io/", "src/cargo/ops/registry.rs"]
@@ -151,7 +165,7 @@ trigger_files = [
 ]
 
 [autolabel."A-networking"]
-trigger_files = ["src/cargo/util/network.rs"]
+trigger_files = ["src/cargo/util/network/"]
 
 [autolabel."A-overrides"]
 trigger_files = ["src/cargo/sources/replaced.rs"]
@@ -166,13 +180,13 @@ trigger_files = ["src/cargo/core/compiler/fingerprint/"]
 trigger_files = ["src/cargo/sources/registry/", "src/cargo/core/registry.rs"]
 
 [autolabel."A-registry-authentication"]
-trigger_files = ["src/cargo/util/auth.rs", "crates/credential/"]
+trigger_files = ["src/cargo/util/auth.rs", "credential/"]
 
 [autolabel."A-semver"]
 trigger_files = [
+  "crates/semver-check",
   "src/cargo/util/semver_ext.rs",
   "src/cargo/util/to_semver.rs",
-  "src/doc/semver-check/",
 ]
 
 [autolabel."A-source-replacement"]
@@ -209,7 +223,7 @@ trigger_files = [
 ]
 
 [autolabel."Command-add"]
-trigger_files = ["src/bin/cargo/commands/add.rs", "src/cargo/ops/cargo_add/*"]
+trigger_files = ["src/bin/cargo/commands/add.rs", "src/cargo/ops/cargo_add/"]
 
 [autolabel."Command-bench"]
 trigger_files = ["src/bin/cargo/commands/bench.rs"]
@@ -300,7 +314,7 @@ trigger_files = ["src/bin/cargo/commands/search.rs"]
 trigger_files = ["src/bin/cargo/commands/test.rs", "src/cargo/ops/cargo_test.rs"]
 
 [autolabel."Command-tree"]
-trigger_files = ["src/bin/cargo/commands/tree.rs", "src/cargo/ops/tree/*"]
+trigger_files = ["src/bin/cargo/commands/tree.rs", "src/cargo/ops/tree/"]
 
 [autolabel."Command-uninstall"]
 trigger_files = ["src/bin/cargo/commands/uninstall.rs", "src/cargo/ops/cargo_uninstall.rs"]

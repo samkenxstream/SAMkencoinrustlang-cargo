@@ -56,6 +56,14 @@ debugger.
 
 [`bench` profile]: ../reference/profiles.html#bench
 
+### Working directory of benchmarks
+
+The working directory of every benchmark is set to the root directory of the 
+package the benchmark belongs to.
+Setting the working directory of benchmarks to the package's root directory 
+makes it possible for benchmarks to reliably access the package's files using 
+relative paths, regardless from where `cargo bench` was executed from.
+
 ## OPTIONS
 
 ### Benchmark Options
@@ -78,10 +86,16 @@ following targets of the selected packages:
 
 The default behavior can be changed by setting the `bench` flag for the target
 in the manifest settings. Setting examples to `bench = true` will build and
-run the example as a benchmark. Setting targets to `bench = false` will stop
-them from being benchmarked by default. Target selection options that take a
-target by name ignore the `bench` flag and will always benchmark the given
+run the example as a benchmark, replacing the example's `main` function with
+the libtest harness.
+
+Setting targets to `bench = false` will stop them from being bencharmked by
+default. Target selection options that take a target by name (such as
+`--example foo`) ignore the `bench` flag and will always benchmark the given
 target.
+
+See [Configuring a target](../reference/cargo-targets.html#configuring-a-target)
+for more information on per-target settings.
 
 {{> options-targets-bin-auto-built }}
 

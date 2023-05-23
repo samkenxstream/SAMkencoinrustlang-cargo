@@ -31,6 +31,23 @@ pub fn main(config: &mut LazyConfig) -> CliResult {
     // This must be completed before config is initialized
     assert_eq!(config.is_init(), false);
     if let Some(new_cwd) = args.get_one::<std::path::PathBuf>("directory") {
+        // This is a temporary hack. This cannot access `Config`, so this is a bit messy.
+        // This does not properly parse `-Z` flags that appear after the subcommand.
+        // The error message is not as helpful as the standard one.
+        let nightly_features_allowed = matches!(&*features::channel(), "nightly" | "dev");
+        if !nightly_features_allowed
+            || (nightly_features_allowed
+                && !args
+                    .get_many("unstable-features")
+                    .map(|mut z| z.any(|value: &String| value == "unstable-options"))
+                    .unwrap_or(false))
+        {
+            return Err(anyhow::format_err!(
+                "the `-C` flag is unstable, \
+                 pass `-Z unstable-options` on the nightly channel to enable it"
+            )
+            .into());
+        }
         std::env::set_current_dir(&new_cwd).context("could not change to requested directory")?;
     }
 
@@ -413,6 +430,9 @@ impl GlobalArgs {
 }
 
 pub fn cli() -> Command {
+    // ALLOWED: `RUSTUP_HOME` should only be read from process env, otherwise
+    // other tools may point to executables from incompatible distributions.
+    #[allow(clippy::disallowed_methods)]
     let is_rustup = std::env::var_os("RUSTUP_HOME").is_some();
     let usage = if is_rustup {
         "cargo [+toolchain] [OPTIONS] [COMMAND]"
@@ -420,6 +440,9 @@ pub fn cli() -> Command {
         "cargo [OPTIONS] [COMMAND]"
     };
     Command::new("cargo")
+        // Subcommands all count their args' display order independently (from 0),
+        // which makes their args interspersed with global args. This puts global args last.
+        .next_display_order(1000)
         .allow_external_subcommands(true)
         // Doesn't mix well with our list of common cargo commands.  See clap-rs/clap#3108 for
         // opening clap up to allow us to style our help template
@@ -476,7 +499,7 @@ See 'cargo help <command>' for more information on a specific command.\n",
         )
         .arg(
             Arg::new("directory")
-                .help("Change to DIRECTORY before doing anything")
+                .help("Change to DIRECTORY before doing anything (nightly-only)")
                 .short('C')
                 .value_name("DIRECTORY")
                 .value_hint(clap::ValueHint::DirPath)

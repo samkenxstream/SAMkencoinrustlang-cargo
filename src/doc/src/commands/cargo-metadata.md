@@ -212,6 +212,12 @@ The output has the following format:
     "workspace_members": [
         "my-package 0.1.0 (path+file:///path/to/my-package)",
     ],
+    /* Array of default members of the workspace.
+       Each entry is the Package ID for the package.
+    */
+    "workspace_default_members": [
+        "my-package 0.1.0 (path+file:///path/to/my-package)",
+    ],
     // The resolved dependency graph for the entire workspace. The enabled
     // features are based on the enabled features for the "current" package.
     // Inactivated optional dependencies are not listed.
@@ -437,7 +443,12 @@ See the <a href="../reference/config.html#command-line-overrides">command-line o
 <dt class="option-term" id="option-cargo-metadata--C"><a class="option-anchor" href="#option-cargo-metadata--C"></a><code>-C</code> <em>PATH</em></dt>
 <dd class="option-desc">Changes the current working directory before executing any specified operations. This affects
 things like where cargo looks by default for the project manifest (<code>Cargo.toml</code>), as well as
-the directories searched for discovering <code>.cargo/config.toml</code>, for example.</dd>
+the directories searched for discovering <code>.cargo/config.toml</code>, for example. This option must
+appear before the command name, for example <code>cargo -C path/to/my-project build</code>.</p>
+<p>This option is only available on the <a href="https://doc.rust-lang.org/book/appendix-07-nightly-rust.html">nightly
+channel</a> and
+requires the <code>-Z unstable-options</code> flag to enable (see
+<a href="https://github.com/rust-lang/cargo/issues/10098">#10098</a>).</dd>
 
 
 <dt class="option-term" id="option-cargo-metadata--h"><a class="option-anchor" href="#option-cargo-metadata--h"></a><code>-h</code></dt>

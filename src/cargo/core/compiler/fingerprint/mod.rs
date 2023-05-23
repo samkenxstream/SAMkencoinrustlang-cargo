@@ -75,6 +75,7 @@
 //! [`Lto`] flags                              | ✓           | ✓
 //! config settings[^5]                        | ✓           |
 //! is_std                                     |             | ✓
+//! `[lints]` table[^6]                        | ✓           |
 //!
 //! [^1]: Build script and bin dependencies are not included.
 //!
@@ -85,6 +86,8 @@
 //!
 //! [^5]: Config settings that are not otherwise captured anywhere else.
 //!       Currently, this is only `doc.extern-map`.
+//!
+//! [^6]: Via [`Manifest::lint_rustflags`][crate::core::Manifest::lint_rustflags]
 //!
 //! When deciding what should go in the Metadata vs the Fingerprint, consider
 //! that some files (like dylibs) do not have a hash in their filename. Thus,
@@ -367,9 +370,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::compiler::unit_graph::UnitDep;
 use crate::core::Package;
-use crate::util;
 use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
+use crate::util::{self, try_canonicalize};
 use crate::util::{internal, path_args, profile, StableHasher};
 use crate::{Config, CARGO_ENV};
 
@@ -764,6 +767,19 @@ pub enum StaleItem {
 }
 
 impl LocalFingerprint {
+    /// Read the environment variable of the given env `key`, and creates a new
+    /// [`LocalFingerprint::RerunIfEnvChanged`] for it.
+    ///
+    // TODO: This is allowed at this moment. Should figure out if it makes
+    // sense if permitting to read env from the config system.
+    #[allow(clippy::disallowed_methods)]
+    fn from_env<K: AsRef<str>>(key: K) -> LocalFingerprint {
+        let key = key.as_ref();
+        let var = key.to_owned();
+        let val = env::var(key).ok();
+        LocalFingerprint::RerunIfEnvChanged { var, val }
+    }
+
     /// Checks dynamically at runtime if this `LocalFingerprint` has a stale
     /// item inside of it.
     ///
@@ -1401,6 +1417,7 @@ fn calculate_normal(cx: &mut Context<'_, '_>, unit: &Unit) -> CargoResult<Finger
         unit.mode,
         cx.bcx.extra_args_for(unit),
         cx.lto[unit],
+        unit.pkg.manifest().lint_rustflags(),
     ));
     // Include metadata since it is exposed as environment variables.
     let m = unit.pkg.manifest().metadata();
@@ -1661,10 +1678,7 @@ fn local_fingerprints_deps(
     local.extend(
         deps.rerun_if_env_changed
             .iter()
-            .map(|var| LocalFingerprint::RerunIfEnvChanged {
-                var: var.clone(),
-                val: env::var(var).ok(),
-            }),
+            .map(LocalFingerprint::from_env),
     );
 
     local
@@ -1941,8 +1955,8 @@ pub fn translate_dep_info(
 ) -> CargoResult<()> {
     let depinfo = parse_rustc_dep_info(rustc_dep_info)?;
 
-    let target_root = target_root.canonicalize()?;
-    let pkg_root = pkg_root.canonicalize()?;
+    let target_root = try_canonicalize(target_root)?;
+    let pkg_root = try_canonicalize(pkg_root)?;
     let mut on_disk_info = EncodedDepInfo::default();
     on_disk_info.env = depinfo.env;
 
@@ -1985,7 +1999,7 @@ pub fn translate_dep_info(
         // If canonicalization fails, just use the abs path. There is currently
         // a bug where --remap-path-prefix is affecting .d files, causing them
         // to point to non-existent paths.
-        let canon_file = abs_file.canonicalize().unwrap_or_else(|_| abs_file.clone());
+        let canon_file = try_canonicalize(&abs_file).unwrap_or_else(|_| abs_file.clone());
 
         let (ty, path) = if let Ok(stripped) = canon_file.strip_prefix(&target_root) {
             (DepInfoPathType::TargetRootRelative, stripped)

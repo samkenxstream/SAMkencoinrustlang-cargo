@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub use self::canonical_url::CanonicalUrl;
@@ -6,6 +7,7 @@ pub use self::config::{homedir, Config, ConfigValue};
 pub(crate) use self::counter::MetricsCounter;
 pub use self::dependency_queue::DependencyQueue;
 pub use self::diagnostic_server::RustfixDiagnosticServer;
+pub use self::edit_distance::{closest, closest_msg, edit_distance};
 pub use self::errors::CliError;
 pub use self::errors::{internal, CargoResult, CliResult};
 pub use self::flock::{FileLock, Filesystem};
@@ -15,7 +17,6 @@ pub use self::hex::{hash_u64, short_hash, to_hex};
 pub use self::into_url::IntoUrl;
 pub use self::into_url_with_base::IntoUrlWithBase;
 pub(crate) use self::io::LimitErrorReader;
-pub use self::lev_distance::{closest, closest_msg, lev_distance};
 pub use self::lockserver::{LockServer, LockServerClient, LockServerStarted};
 pub use self::progress::{Progress, ProgressStyle};
 pub use self::queue::Queue;
@@ -37,6 +38,7 @@ mod counter;
 pub mod cpu;
 mod dependency_queue;
 pub mod diagnostic_server;
+pub mod edit_distance;
 pub mod errors;
 mod flock;
 pub mod graph;
@@ -48,7 +50,6 @@ pub mod into_url;
 mod into_url_with_base;
 mod io;
 pub mod job;
-pub mod lev_distance;
 mod lockserver;
 pub mod machine_message;
 pub mod network;
@@ -131,6 +132,79 @@ pub fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
         prefix.push('…');
     }
     prefix
+}
+
+#[cfg(not(windows))]
+#[inline]
+pub fn try_canonicalize<P: AsRef<Path>>(path: P) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(&path)
+}
+
+#[cfg(windows)]
+#[inline]
+pub fn try_canonicalize<P: AsRef<Path>>(path: P) -> std::io::Result<PathBuf> {
+    use std::ffi::OsString;
+    use std::io::Error;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::{io::ErrorKind, ptr};
+    use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
+    use windows_sys::Win32::Storage::FileSystem::GetFullPathNameW;
+
+    // On Windows `canonicalize` may fail, so we fall back to getting an absolute path.
+    std::fs::canonicalize(&path).or_else(|_| {
+        // Return an error if a file does not exist for better compatiblity with `canonicalize`
+        if !path.as_ref().try_exists()? {
+            return Err(Error::new(ErrorKind::NotFound, "the path was not found"));
+        }
+
+        // This code is based on the unstable `std::path::absolute` and could be replaced with it
+        // if it's stabilized.
+
+        let path = path.as_ref().as_os_str();
+        let mut path_u16 = Vec::with_capacity(path.len() + 1);
+        path_u16.extend(path.encode_wide());
+        if path_u16.iter().find(|c| **c == 0).is_some() {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "strings passed to WinAPI cannot contain NULs",
+            ));
+        }
+        path_u16.push(0);
+
+        loop {
+            unsafe {
+                SetLastError(0);
+                let len =
+                    GetFullPathNameW(path_u16.as_ptr(), 0, &mut [] as *mut u16, ptr::null_mut());
+                if len == 0 {
+                    let error = GetLastError();
+                    if error != 0 {
+                        return Err(Error::from_raw_os_error(error as i32));
+                    }
+                }
+                let mut result = vec![0u16; len as usize];
+
+                let write_len = GetFullPathNameW(
+                    path_u16.as_ptr(),
+                    result.len().try_into().unwrap(),
+                    result.as_mut_ptr().cast::<u16>(),
+                    ptr::null_mut(),
+                );
+                if write_len == 0 {
+                    let error = GetLastError();
+                    if error != 0 {
+                        return Err(Error::from_raw_os_error(error as i32));
+                    }
+                }
+
+                if write_len <= len {
+                    return Ok(PathBuf::from(OsString::from_wide(
+                        &result[0..(write_len as usize)],
+                    )));
+                }
+            }
+        }
+    })
 }
 
 #[cfg(test)]
